@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client';
-import { QuestionPicker, type PickItem } from '@/components/QuestionPicker';
+import { QuestionPicker, SetLoader, type PickItem } from '@/components/QuestionPicker';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, Empty, ErrorNote, Input } from '@/components/ui';
 
@@ -140,6 +140,7 @@ function NewSession({ classes, reload }: { classes: Cls[]; reload: () => void })
   const [bank, setBank] = useState<PickItem[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showPicker, setShowPicker] = useState(false);
+  const [practice, setPractice] = useState(false);
   useEffect(() => {
     api<{ id: string; round_id: string; label: string; prompt: string; active: boolean }[]>('/api/admin/items').then((rows) => {
       const list = rows.filter((r) => r.active).map((r) => ({ id: r.id, round: r.round_id, label: r.label, prompt: r.prompt }));
@@ -153,7 +154,7 @@ function NewSession({ classes, reload }: { classes: Cls[]; reload: () => void })
       <form className="flex flex-col gap-3" onSubmit={async (e) => {
         e.preventDefault(); setErr(''); setBusy(true);
         try {
-          const r = await api<{ id: string }>('/api/admin/sessions', { json: { classId, title, teamMode: mode, maxTeamSize: size, teams: mode === 'teacher' ? teams.split('\n') : [], itemIds: bank?.length ? [...picked] : undefined } });
+          const r = await api<{ id: string }>('/api/admin/sessions', { json: { classId, title, teamMode: mode, maxTeamSize: size, teams: mode === 'teacher' ? teams.split('\n') : [], itemIds: bank?.length ? [...picked] : undefined, practice } });
           location.href = `/admin/session/${r.id}`;
         } catch (e2) { setErr((e2 as Error).message); setBusy(false); }
         reload();
@@ -189,6 +190,11 @@ function NewSession({ classes, reload }: { classes: Cls[]; reload: () => void })
             <span>Questions in this game: <b className="text-white">{bank ? `${picked.size} of ${bank.length}` : '…'}</b></span>
             <button type="button" className="text-brand-2 hover:underline" onClick={() => setShowPicker(!showPicker)}>{showPicker ? 'Hide list' : 'Choose questions'}</button>
           </div>
+          {bank && bank.length > 0 && <SetLoader items={bank} onLoad={(ids, set) => { setPicked(ids); setPractice(set.kind === 'practice'); }} />}
+          <label className="flex items-center gap-2 text-muted">
+            <input type="checkbox" className="accent-violet-500" checked={practice} onChange={(e) => setPractice(e.target.checked)} />
+            Practice round (students see that scores will be reset)
+          </label>
           {showPicker && bank && <QuestionPicker items={bank} selected={picked} onChange={setPicked} maxHeight="45vh" />}
           <p className="text-xs text-muted">Only the chosen questions appear on your control screen and count toward team totals. You can change this later in the game&apos;s Questions tab.</p>
         </div>

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkAnswer } from '../lib/checkers';
 import { ITEMS, RETIRED } from '../lib/seed';
+import { QUESTION_SETS, setItemIds, type QuestionSet } from '../lib/sets';
 import type { AnswerKey } from '../lib/types';
 
 // Recomputes the question-bank answers with real algorithms, so a typo in an
@@ -197,5 +198,45 @@ describe('graph answers', () => {
     for (let k = 0; k < 5; k++) for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) if (R[i][k] && R[k][j]) R[i][j] = 1;
     expect(parts('M17')[0]).toBe(J(R[1]));
     expect(parts('M18')).toEqual([R.flat().filter(Boolean).length, R[4][0] === 1]);
+  });
+});
+
+describe('question sets', () => {
+  const live = new Set(ITEMS.filter((i) => !RETIRED.some(([r, l]) => r === i.round_id && l === i.label)).map((i) => `${i.round_id}|${i.label}`));
+  const labels = (s: QuestionSet) => [...s.R1.map((l) => `R1|${l}`), ...s.R2.map((l) => `R2|${l}`), ...s.R3.map((l) => `R3|${l}`)];
+  const tournament = QUESTION_SETS.filter((s) => s.kind === 'tournament');
+  const practice = QUESTION_SETS.filter((s) => s.kind === 'practice');
+
+  it('has at least 10 tournament sets and 2 practice sets with unique ids', () => {
+    expect(tournament.length).toBeGreaterThanOrEqual(10);
+    expect(practice).toHaveLength(2);
+    expect(new Set(QUESTION_SETS.map((s) => s.id)).size).toBe(QUESTION_SETS.length);
+  });
+  it('only uses active questions, with no repeats inside a set', () => {
+    for (const s of QUESTION_SETS) {
+      for (const l of labels(s)) expect(live.has(l), `${s.id}: ${l}`).toBe(true);
+      expect(new Set(labels(s)).size, s.id).toBe(labels(s).length);
+    }
+  });
+  it('gives every tournament set 6 R1, 4 R2 and 5 R3, and no two sets are identical', () => {
+    for (const s of tournament) expect([s.R1.length, s.R2.length, s.R3.length], s.id).toEqual([6, 4, 5]);
+    const keys = tournament.map((s) => labels(s).sort().join());
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+  it('keeps follow-up items with the question they build on', () => {
+    for (const s of QUESTION_SETS) {
+      if (s.R2.includes('H4')) expect(s.R2, s.id).toContain('H3');
+      if (s.R2.includes('H7')) expect(s.R2, s.id).toContain('H6');
+    }
+  });
+  it('never reuses a practice question in a tournament set', () => {
+    const used = new Set(practice.flatMap(labels));
+    for (const s of tournament) for (const l of labels(s)) expect(used.has(l), `${s.id} uses practice item ${l}`).toBe(false);
+  });
+  it('loads R4/R5 for tournament sets only', () => {
+    const bank = ITEMS.map((i) => ({ id: `${i.round_id}|${i.label}`, round: i.round_id, label: i.label }));
+    const r45 = bank.filter((i) => i.round === 'R4' || i.round === 'R5').length;
+    expect(setItemIds(tournament[0], bank)).toHaveLength(15 + r45);
+    expect(setItemIds(practice[0], bank)).toHaveLength(4);
   });
 });

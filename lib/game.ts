@@ -34,7 +34,7 @@ async function bump(db: Query, sessionId: string) {
 
 export interface SessionRow {
   id: string; class_id: string; code: string; title: string; status: string;
-  team_mode: 'teacher' | 'student'; max_team_size: number; created_at: string; class_name?: string;
+  team_mode: 'teacher' | 'student'; max_team_size: number; created_at: string; class_name?: string; practice: boolean;
 }
 
 async function sessionByCode(code: string): Promise<SessionRow> {
@@ -157,7 +157,7 @@ export async function boardView(code: string) {
     `select t.name as team, t.color, p.type, p.requested_at as at from powerups p join teams t on t.id = p.team_id
       where p.session_id = $1 and p.status <> 'available' and p.requested_at is not null order by p.requested_at desc limit 3`, [s.id]);
   return {
-    session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status },
+    session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status, practice: s.practice },
     state: stateView(g, it),
     plays,
     teams: await teamScores(s.id),
@@ -238,7 +238,7 @@ export async function memberView(token: string | null) {
     [s.id, m.team_id]);
   return {
     me: { name: m.display_name },
-    session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status },
+    session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status, practice: s.practice },
     team,
     teamsCount: scores.length,
     leader: scores[0] ? { name: scores[0].name, total: scores[0].total } : null,
@@ -381,7 +381,7 @@ export async function listSessions(classId?: string) {
       where ($1::uuid is null or s.class_id = $1) order by s.created_at desc`, [classId ?? null]);
 }
 
-export async function createSession(input: { classId: string; title?: string; teamMode?: string; maxTeamSize?: number; teams?: string[]; itemIds?: unknown }) {
+export async function createSession(input: { classId: string; title?: string; teamMode?: string; maxTeamSize?: number; teams?: string[]; itemIds?: unknown; practice?: boolean }) {
   return tx(async (db) => {
     const [c] = await db(`select id from classes where id=$1`, [input.classId]);
     if (!c) throw new HttpError(400, 'Pick a class.');
@@ -390,8 +390,8 @@ export async function createSession(input: { classId: string; title?: string; te
     const mode = input.teamMode === 'student' ? 'student' : 'teacher';
     const size = Math.min(10, Math.max(1, Math.round(Number(input.maxTeamSize) || 4)));
     const [s] = await db<{ id: string }>(
-      `insert into sessions (class_id, code, title, team_mode, max_team_size) values ($1,$2,$3,$4,$5) returning id`,
-      [input.classId, code, clean(input.title, 60) || 'Algorithm Arena', mode, size]);
+      `insert into sessions (class_id, code, title, team_mode, max_team_size, practice) values ($1,$2,$3,$4,$5,$6) returning id`,
+      [input.classId, code, clean(input.title, 60) || 'Algorithm Arena', mode, size, !!input.practice]);
     await db(`insert into game_state (session_id) values ($1)`, [s.id]);
     await setSessionItems(db, s.id, input.itemIds);
     const names = (input.teams ?? []).map((t) => clean(t, 24)).filter(Boolean);
@@ -426,8 +426,9 @@ export async function setGameItems(sessionId: string, itemIds: unknown) {
   });
 }
 
-export async function updateSession(id: string, patch: { status?: string; title?: string; teamMode?: string; maxTeamSize?: number; itemIds?: unknown }) {
+export async function updateSession(id: string, patch: { status?: string; title?: string; teamMode?: string; maxTeamSize?: number; itemIds?: unknown; practice?: unknown }) {
   if (patch.itemIds !== undefined) await setGameItems(id, patch.itemIds);
+  if (typeof patch.practice === 'boolean') await q(`update sessions set practice=$1 where id=$2`, [patch.practice, id]);
   if (patch.status && ['lobby', 'live', 'ended'].includes(patch.status)) await q(`update sessions set status=$1 where id=$2`, [patch.status, id]);
   if (patch.title) await q(`update sessions set title=$1 where id=$2`, [clean(patch.title, 60), id]);
   if (patch.teamMode) await q(`update sessions set team_mode=$1 where id=$2`, [patch.teamMode === 'student' ? 'student' : 'teacher', id]);
@@ -562,6 +563,16 @@ export async function control(sessionId: string, action: string, itemId?: string
     }
     case 'clear':
       await q(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+      break;
+    case 'reset-scores':
+      // After a practice round: wipe every answer, point and played power-up card. Teams and members stay.
+      await tx(async (db) => {
+        await db(`delete from submissions where session_id=$1`, [sessionId]);
+        await db(`delete from score_events where session_id=$1`, [sessionId]);
+        await db(`update powerups set status='available', item_id=null, requested_at=null, used_at=null, hint=null where session_id=$1`, [sessionId]);
+        await db(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+        await db(`update sessions set practice=false, status=case when status='ended' then 'live' else status end where id=$1`, [sessionId]);
+      });
       break;
     default:
       throw new HttpError(400, 'Unknown action.');

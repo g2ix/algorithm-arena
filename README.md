@@ -54,6 +54,8 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 ## Running a game
 
 1. **Admin → Start a new game:** choose the class, whether you make the teams or students do, and (under **Choose questions**) which questions are in this game. The game gets a 6-letter code. You can change the questions later in the game's **Questions** tab; only chosen questions appear on the control screen and count toward team totals.
+   - **Question sets:** instead of ticking questions one by one, use **Load a question set**. There are 11 tournament sets (6 R1 + 4 R2 + 5 R3, plus all R4 and R5) and 2 practice sets (4 easy warm-ups each). Practice questions never appear in a tournament set. Sets are defined in `lib/sets.ts`.
+   - **Practice first:** load a practice set (this ticks **Practice round**, so phones and the projector say scores will be reset). When the warm-up is done, press **↺ Reset scores**: every answer, point and adjustment is deleted and each team gets its power-up card back, while teams and players stay. Then load a tournament set in the **Questions** tab and save.
 2. **Open the projector board** from the control screen. Students scan the QR code or go to the site and type the code.
 3. **For each item** in the control screen: pick it on the left → (R3: **Start wagers**) → **Open answering** → **Reveal & score** → **Next**.
 4. Use **✓ / ✗** beside any answer to accept a valid alternative or reject one; scores are recalculated instantly.

@@ -6,7 +6,7 @@ import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, cx, Dot, Empty, ErrorNote, Input, ROUND_META, signed, Spinner } from '@/components/ui';
 import { POWERUP_INFO } from '@/components/powerups';
-import { QuestionPicker } from '@/components/QuestionPicker';
+import { QuestionPicker, SetLoader } from '@/components/QuestionPicker';
 import type { LifelineHint, StateView, TeamScore } from '@/components/views';
 
 type Item = { id: string; round: string; label: string; prompt: string; manual: boolean; points: Record<string, number | boolean>; timeLimit: number; answerText: string; selected: boolean };
@@ -14,7 +14,7 @@ type Sub = { id: string; team_id: string; answer_raw: string[] | null; wager: nu
 type Pow = { id: string; team_id: string; team: string; type: string; status: string; item_id: string | null; hint: LifelineHint | null };
 type Ev = { id: string; team_id: string; item_id: string | null; tag: string; points: number; reason: string; created_at: string };
 type Admin = {
-  session: { id: string; code: string; title: string; status: string; class_name: string; team_mode: string; max_team_size: number };
+  session: { id: string; code: string; title: string; status: string; class_name: string; team_mode: string; max_team_size: number; practice: boolean };
   state: StateView & { currentItemId: string | null };
   current: { id: string; round_id: string; label: string; prompt: string; answer_text: string; explanation: string | null; time_limit_s: number; points: { wager?: boolean }; answer_key: { type: string } } | null;
   items: Item[];
@@ -61,12 +61,16 @@ function SessionAdmin() {
           <h1 className="flex items-center gap-3 text-3xl font-black">
             {data.session.title}
             <Badge color={data.session.status === 'live' ? '#22c55e' : data.session.status === 'ended' ? '#94a3b8' : '#22d3ee'}>{data.session.status}</Badge>
+            {data.session.practice && <Badge color="#fbbf24">🧪 practice</Badge>}
           </h1>
           <div className="text-sm text-muted">Join code <span className="font-mono text-lg font-bold text-brand-2">{data.session.code}</span></div>
         </div>
         <div className="flex flex-wrap gap-2">
           <a href={`/board/${data.session.code}`} target="_blank" rel="noreferrer"><Button variant="outline">📺 Open projector board</Button></a>
           <a href={`${base}/csv`}><Button variant="ghost">⬇ CSV</Button></a>
+          <Button variant="ghost" onClick={() => confirm(
+            'Reset ALL scores to 0?\n\nThis deletes every answer, point and adjustment in this game and gives every team its power-up card back. Teams and players stay. Use it after a practice round, before the real tournament.',
+          ) && call(`${base}/control`, { action: 'reset-scores' })}>↺ Reset scores</Button>
           {data.session.status !== 'ended' ? (
             <Button variant="danger" onClick={() => confirm('End the game and show the champion on the board?') && call(base, { status: 'ended' }, 'PATCH')}>🏁 End game</Button>
           ) : (
@@ -422,9 +426,12 @@ function Teams({ data, call, base }: { data: Admin; call: Call; base: string }) 
 function Questions({ data, call, base }: { data: Admin; call: Call; base: string }) {
   const saved = new Set(data.items.filter((i) => i.selected).map((i) => i.id));
   const [picked, setPicked] = useState<Set<string>>(saved);
+  const [practice, setPractice] = useState(data.session.practice);
   const savedKey = [...saved].sort().join();
   useEffect(() => setPicked(new Set(savedKey ? savedKey.split(',') : [])), [savedKey]);
-  const dirty = [...picked].sort().join() !== savedKey;
+  useEffect(() => setPractice(data.session.practice), [data.session.practice]);
+  const dirty = [...picked].sort().join() !== savedKey || practice !== data.session.practice;
+  const hasPoints = data.teams.some((t) => t.total !== 0) || data.scoredItemIds.length > 0;
   const played = new Set(data.scoredItemIds);
   const droppingPlayed = [...saved].filter((id) => !picked.has(id) && played.has(id)).length;
   return (
@@ -437,12 +444,25 @@ function Questions({ data, call, base }: { data: Admin; call: Call; base: string
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" disabled={!dirty} onClick={() => setPicked(saved)}>Undo</Button>
+          <Button variant="ghost" disabled={!dirty} onClick={() => { setPicked(saved); setPractice(data.session.practice); }}>Undo</Button>
           <Button disabled={!dirty || picked.size === 0} onClick={() => {
             if (droppingPlayed && !confirm(`${droppingPlayed} removed question(s) were already played. Their points will no longer count toward totals (you can add them back later). Continue?`)) return;
-            void call(base, { itemIds: [...picked] }, 'PATCH');
+            void call(base, { itemIds: [...picked], practice }, 'PATCH');
           }}>Save questions</Button>
         </div>
+      </div>
+      {data.session.practice && hasPoints && (
+        <div className="mb-3 rounded-xl border border-gold/50 bg-gold/10 p-3 text-sm">
+          <b className="text-gold">Practice finished?</b> Press <b>↺ Reset scores</b> at the top to set every team back to 0
+          (power-up cards come back too), then load a tournament set below and save.
+        </div>
+      )}
+      <div className="mb-3 flex flex-col gap-2">
+        <SetLoader items={data.items} onLoad={(ids, set) => { setPicked(ids); setPractice(set.kind === 'practice'); }} />
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <input type="checkbox" className="accent-violet-500" checked={practice} onChange={(e) => setPractice(e.target.checked)} />
+          Practice round (students and the projector see that scores will be reset)
+        </label>
       </div>
       <QuestionPicker items={data.items} selected={picked} onChange={setPicked} maxHeight="65vh" />
     </Card>

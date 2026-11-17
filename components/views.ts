@@ -10,7 +10,7 @@ export type TeamScore = { id: string; name: string; color: string; total: number
 
 export type MeView = {
   me: { name: string };
-  session: { id: string; code: string; title: string; className: string; status: string };
+  session: { id: string; code: string; title: string; className: string; status: string; practice: boolean };
   team: TeamScore;
   teamsCount: number;
   leader: { name: string; total: number } | null;
@@ -21,7 +21,7 @@ export type MeView = {
 };
 
 export type BoardView = {
-  session: { id: string; code: string; title: string; className: string; status: string };
+  session: { id: string; code: string; title: string; className: string; status: string; practice: boolean };
   state: StateView;
   plays: { team: string; color: string; type: string; at: string }[];
   teams: TeamScore[];

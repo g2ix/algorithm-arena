@@ -19,6 +19,7 @@ export function TeamHeader({ data }: { data: MeView }) {
           <div className="min-w-0">
             <div className="truncate font-bold leading-tight">{data.team.name}</div>
             <div className="truncate text-xs text-muted">{data.me.name} · {data.session.className}</div>
+            {data.session.practice && <div className="text-[11px] font-bold text-amber-300">🧪 Practice round: scores reset before the real game</div>}
           </div>
         </div>
         <div className="text-right">

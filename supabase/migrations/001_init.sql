@@ -118,6 +118,8 @@ create table if not exists powerups (
 );
 alter table powerups add column if not exists hint jsonb;   -- Lifeline: the system's hint for the team's draft
 
+alter table sessions add column if not exists practice boolean not null default false;  -- practice round: board says scores don't count yet
+
 -- Which questions are part of each game. Created once; existing games get
 -- every question that was active at that moment, so their totals don't change.
 do $$

@@ -49,6 +49,7 @@ export default function BoardPage() {
           <div className="hidden border-l border-line pl-5 md:block">
             <div className="text-sm text-muted">{data.session.className}</div>
             <div className="text-lg font-bold">{data.session.title}</div>
+            {data.session.practice && <div className="mt-1 inline-block rounded-full bg-amber-400/20 px-3 py-0.5 text-sm font-bold text-amber-300">🧪 PRACTICE ROUND · scores reset before the real game</div>}
           </div>
         </div>
         <div className="flex items-center gap-4">

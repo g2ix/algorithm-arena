@@ -1,8 +1,41 @@
 'use client';
 
+import { useState } from 'react';
 import { cx, ROUND_META } from '@/components/ui';
+import { QUESTION_SETS, setItemIds, type QuestionSet } from '@/lib/sets';
 
 export type PickItem = { id: string; round: string; label: string; prompt: string };
+
+/** Pick a ready-made set and load it into the question list. */
+export function SetLoader({ items, onLoad }: { items: PickItem[]; onLoad: (ids: Set<string>, set: QuestionSet) => void }) {
+  const [id, setId] = useState('');
+  const set = QUESTION_SETS.find((s) => s.id === id);
+  const groups = [['practice', 'Practice (warm-up, then reset scores)'], ['tournament', 'Tournament sets']] as const;
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-line bg-ink/40 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={id} onChange={(e) => setId(e.target.value)}
+          className="min-w-0 flex-1 rounded-lg border border-line bg-ink/70 px-3 py-2 text-sm text-white">
+          <option value="">Load a question set…</option>
+          {groups.map(([kind, label]) => (
+            <optgroup key={kind} label={label}>
+              {QUESTION_SETS.filter((s) => s.kind === kind).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <button type="button" disabled={!set} onClick={() => set && onLoad(new Set(setItemIds(set, items)), set)}
+          className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">Load set</button>
+      </div>
+      {set && (
+        <p className="text-xs text-muted">
+          {set.kind === 'practice' ? '🧪 Practice · ' : '🏆 Tournament · '}
+          R1 {set.R1.join(', ')} · R2 {set.R2.join(', ')} · R3 {set.R3.join(', ')}{set.kind === 'tournament' ? ' · all R4 and R5' : ''}.{' '}
+          {set.blurb}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Checklist of questions grouped by round, with All / None per round. */
 export function QuestionPicker({ items, selected, onChange, maxHeight = '60vh' }: {
