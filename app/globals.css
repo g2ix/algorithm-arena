@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #070b1a;
+  --color-panel: #0f1630;
+  --color-panel-2: #151e3f;
+  --color-line: #26315c;
+  --color-muted: #8a96c2;
+  --color-brand: #7c5cff;
+  --color-brand-2: #22d3ee;
+  --color-win: #22c55e;
+  --color-lose: #f43f5e;
+  --color-gold: #fbbf24;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html, body { background: var(--color-ink); color: #e8ecff; }
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(34, 211, 238, 0.12), transparent 60%),
+    var(--color-ink);
+  background-attachment: fixed;
+}
+
+.grid-bg {
+  background-image: linear-gradient(rgba(124,92,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(124,92,255,.07) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.glow { box-shadow: 0 0 0 1px rgba(124,92,255,.35), 0 10px 40px -10px rgba(124,92,255,.45); }
+.text-gradient { background: linear-gradient(90deg, #a78bfa, #22d3ee); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+@keyframes pop { 0% { transform: scale(.85); opacity: 0 } 60% { transform: scale(1.04); opacity: 1 } 100% { transform: scale(1) } }
+.pop { animation: pop .35s ease-out both; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(251,191,36,.6) } 100% { box-shadow: 0 0 0 14px rgba(251,191,36,0) } }
+.pulse-ring { animation: pulse-ring 1.2s ease-out infinite; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0 } to { transform: none; opacity: 1 } }
+.rise { animation: rise .3s ease-out both; }
+
+input, textarea, select { color-scheme: dark; }
