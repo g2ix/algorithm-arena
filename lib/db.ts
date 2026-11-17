@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
-import { ITEMS, ROUNDS } from './seed';
+import { ITEMS, RETIRED, ROUNDS } from './seed';
 
 type Sql = ReturnType<typeof postgres>;
 export type Query = <T = any>(text: string, params?: unknown[]) => Promise<T[]>;
@@ -62,10 +62,13 @@ async function init(sql: Sql) {
       await t.unsafe(
         `insert into items (round_id, label, sort, prompt, figure_url, answer_figure_url, answer_type, answer_key, answer_text, explanation, points, time_limit_s)
          values ($1,$2,$3,$4,$5,$6,$7,$8::text::jsonb,$9,$10,$11::text::jsonb,$12)
-         on conflict (round_id, label) do nothing`,
+         on conflict (round_id, label) do update set sort = excluded.sort`,
         [it.round_id, it.label, sort, it.prompt, it.figure_url ?? null, it.answer_figure_url ?? null, it.answer_key.type,
          JSON.stringify(it.answer_key), it.answer_text, it.explanation ?? null, JSON.stringify(it.points), it.time_limit_s],
       );
+    }
+    for (const [round, label] of RETIRED) {
+      await t.unsafe(`update items set active = false where round_id = $1 and label = $2`, [round, label]);
     }
     await t.unsafe(
       `insert into app_meta (key, value) values ('schema_version', $1) on conflict (key) do update set value = excluded.value`,

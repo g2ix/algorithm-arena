@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 380" width="640" height="380">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3f6212"/></marker></defs>
+<rect width="640" height="380" fill="#fff"/>
+<text x="320" y="30" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="bold" fill="#1f2937">Map 2 (minutes per road)</text>
+<line x1="87.4" y1="186.6" x2="181.0" y2="114.6" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="130.5" y="149.1" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="143.5" y="166.1" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">4</text>
+<line x1="87.4" y1="213.4" x2="181.0" y2="285.4" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="113.5" y="249.1" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="126.5" y="266.1" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">3</text>
+<line x1="200.0" y1="278.0" x2="200.0" y2="124.0" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="201.0" y="188.0" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="214.0" y="205.0" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">2</text>
+<line x1="219.9" y1="109.3" x2="328.3" y2="159.9" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="256.1" y="135.7" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="269.1" y="152.7" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">5</text>
+<line x1="216.6" y1="285.6" x2="331.9" y2="185.7" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="271.2" y="233.6" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="284.2" y="250.6" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">7</text>
+<line x1="221.9" y1="302.2" x2="376.1" y2="317.6" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="285.6" y="311.9" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="298.6" y="328.9" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">9</text>
+<line x1="357.0" y1="190.9" x2="392.4" y2="297.2" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="348.7" y="237.4" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="361.7" y="254.4" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">2</text>
+<line x1="480.6" y1="100.4" x2="371.2" y2="158.7" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="405.4" y="105.6" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="418.4" y="122.6" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">4</text>
+<line x1="491.2" y1="110.2" x2="409.6" y2="298.0" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="424.2" y="187.4" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="437.2" y="204.4" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">6</text>
+<line x1="559.5" y1="258.0" x2="422.4" y2="311.3" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="471.9" y="260.0" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="484.9" y="277.0" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">6</text>
+<line x1="509.8" y1="109.7" x2="569.3" y2="228.5" stroke="#3f6212" stroke-width="2.5"/>
+<rect x="514.5" y="164.3" width="26" height="22" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="527.5" y="181.3" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#92400e">3</text>
+<circle cx="70" cy="200" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="70" y="207" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">A</text>
+<circle cx="200" cy="300" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="200" y="307" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">B</text>
+<circle cx="200" cy="100" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="200" y="107" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">D</text>
+<circle cx="350" cy="170" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="350" y="177" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">E</text>
+<circle cx="400" cy="320" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="400" y="327" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">G</text>
+<circle cx="500" cy="90" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="500" y="97" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">C</text>
+<circle cx="580" cy="250" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="580" y="257" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">F</text>
+
+</svg>

@@ -63,7 +63,8 @@ describe('every seeded key accepts its own answer text', () => {
     M3: ['T B M A I S F C', '3'],
     M5: ['yes', 'B C D'],
   };
-  for (const s of ITEMS.filter((i) => i.answer_key.type !== 'manual')) {
+  // Multi-part items without a hand-typed answer here are covered in questions.test.ts.
+  for (const s of ITEMS.filter((i) => i.answer_key.type !== 'manual' && (i.answer_key.type !== 'multi' || canonical[i.label]))) {
     it(`${s.round_id} ${s.label}`, () => {
       const ans = canonical[s.label] ?? [s.answer_text];
       expect(checkAnswer(s.answer_key, ans)).toBe(true);

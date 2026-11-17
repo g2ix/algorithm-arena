@@ -1,14 +1,15 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, cx, Dot, Empty, ErrorNote, Input, ROUND_META, signed, Spinner } from '@/components/ui';
 import { POWERUP_INFO } from '@/components/powerups';
+import { QuestionPicker } from '@/components/QuestionPicker';
 import type { LifelineHint, StateView, TeamScore } from '@/components/views';
 
-type Item = { id: string; round: string; label: string; prompt: string; manual: boolean; points: Record<string, number | boolean>; timeLimit: number; answerText: string };
+type Item = { id: string; round: string; label: string; prompt: string; manual: boolean; points: Record<string, number | boolean>; timeLimit: number; answerText: string; selected: boolean };
 type Sub = { id: string; team_id: string; answer_raw: string[] | null; wager: number | null; is_correct: boolean | null; override: boolean; rank: number | null; submitted_at: string | null; member: string | null };
 type Pow = { id: string; team_id: string; team: string; type: string; status: string; item_id: string | null; hint: LifelineHint | null };
 type Ev = { id: string; team_id: string; item_id: string | null; tag: string; points: number; reason: string; created_at: string };
@@ -25,7 +26,7 @@ type Admin = {
   manualEvents: Ev[];
 };
 
-const TABS = ['Control', 'Encode R4 / R5', 'Teams', 'Power-ups & points'] as const;
+const TABS = ['Control', 'Questions', 'Encode R4 / R5', 'Teams', 'Power-ups & points'] as const;
 
 export default function SessionAdminPage() {
   return (
@@ -84,6 +85,7 @@ function SessionAdmin() {
       <ErrorNote>{err}</ErrorNote>
 
       {tab === 'Control' && <Control data={data} call={call} base={base} />}
+      {tab === 'Questions' && <Questions data={data} call={call} base={base} />}
       {tab === 'Encode R4 / R5' && <Encode data={data} call={call} base={base} />}
       {tab === 'Teams' && <Teams data={data} call={call} base={base} />}
       {tab === 'Power-ups & points' && <PowerPoints data={data} call={call} base={base} />}
@@ -101,8 +103,9 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
   const [secs, setSecs] = useState<number | ''>('');
   const left = useCountdown(phase === 'open' ? data.state.closesAt : null, data.state.serverNow);
   const ctl = (action: string, extra: object = {}) => call(`${base}/control`, { action, ...extra });
-  const idx = cur ? data.items.findIndex((i) => i.id === cur.id) : -1;
-  const next = idx >= 0 ? data.items[idx + 1] : data.items[0];
+  const inGame = data.items.filter((i) => i.selected);
+  const idx = cur ? inGame.findIndex((i) => i.id === cur.id) : -1;
+  const next = idx >= 0 ? inGame[idx + 1] : inGame[0];
   const subByTeam = new Map(data.submissions.map((s) => [s.team_id, s]));
   const isManual = cur?.answer_key.type === 'manual';
   const isWager = !!cur?.points.wager;
@@ -117,7 +120,7 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
             <div className="px-2 py-1 text-xs font-bold uppercase tracking-wider" style={{ color: ROUND_META[r].color }}>
               {ROUND_META[r].icon} {r} · {ROUND_META[r].title}
             </div>
-            {data.items.filter((i) => i.round === r).map((i) => {
+            {inGame.filter((i) => i.round === r).map((i) => {
               const done = data.scoredItemIds.includes(i.id);
               const on = i.id === cur?.id;
               return (
@@ -411,6 +414,38 @@ function Teams({ data, call, base }: { data: Admin; call: Call; base: string }) 
         </Card>
       </div>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ questions in this game
+
+function Questions({ data, call, base }: { data: Admin; call: Call; base: string }) {
+  const saved = new Set(data.items.filter((i) => i.selected).map((i) => i.id));
+  const [picked, setPicked] = useState<Set<string>>(saved);
+  const savedKey = [...saved].sort().join();
+  useEffect(() => setPicked(new Set(savedKey ? savedKey.split(',') : [])), [savedKey]);
+  const dirty = [...picked].sort().join() !== savedKey;
+  const played = new Set(data.scoredItemIds);
+  const droppingPlayed = [...saved].filter((id) => !picked.has(id) && played.has(id)).length;
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold">Questions in this game</h2>
+          <p className="text-sm text-muted">
+            <b className="text-white">{picked.size}</b> of {data.items.length} chosen. Only these appear on the Control tab and count toward team totals.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" disabled={!dirty} onClick={() => setPicked(saved)}>Undo</Button>
+          <Button disabled={!dirty || picked.size === 0} onClick={() => {
+            if (droppingPlayed && !confirm(`${droppingPlayed} removed question(s) were already played. Their points will no longer count toward totals (you can add them back later). Continue?`)) return;
+            void call(base, { itemIds: [...picked] }, 'PATCH');
+          }}>Save questions</Button>
+        </div>
+      </div>
+      <QuestionPicker items={data.items} selected={picked} onChange={setPicked} maxHeight="65vh" />
+    </Card>
   );
 }
 

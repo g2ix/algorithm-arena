@@ -53,7 +53,7 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 
 ## Running a game
 
-1. **Admin → Start a new game:** choose the class and whether you make the teams or students do. The game gets a 6-letter code.
+1. **Admin → Start a new game:** choose the class, whether you make the teams or students do, and (under **Choose questions**) which questions are in this game. The game gets a 6-letter code. You can change the questions later in the game's **Questions** tab; only chosen questions appear on the control screen and count toward team totals.
 2. **Open the projector board** from the control screen. Students scan the QR code or go to the site and type the code.
 3. **For each item** in the control screen: pick it on the left → (R3: **Start wagers**) → **Open answering** → **Reveal & score** → **Next**.
 4. Use **✓ / ✗** beside any answer to accept a valid alternative or reject one; scores are recalculated instantly.
@@ -109,7 +109,8 @@ lib/hints.ts          Lifeline hints from a team's draft answer
 lib/game.ts           all game logic and database queries
 lib/db.ts             Postgres connection + automatic setup
 lib/schema.ts         tables (also in supabase/migrations/001_init.sql)
-lib/seed.ts           the question bank from the activity doc
+lib/seed.ts           the question bank (R1 20, R2 15, R3 20 auto-scored items)
+scripts/make-figures.mjs  draws the SVG figures for the newer items
 public/figures/       tree and graph images
 tests/                unit tests
 ```

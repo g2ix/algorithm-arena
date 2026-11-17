@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 320" width="520" height="320">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3f6212"/></marker></defs>
+<rect width="520" height="320" fill="#fff"/>
+<text x="260" y="30" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="bold" fill="#1f2937">Graph G6 (directed)</text>
+<line x1="111.3" y1="104.7" x2="226.7" y2="75.8" stroke="#3f6212" stroke-width="2.5" marker-end="url(#arr)"/>
+<line x1="250.0" y1="92.0" x2="250.0" y2="206.0" stroke="#3f6212" stroke-width="2.5" marker-end="url(#arr)"/>
+<line x1="232.4" y1="216.8" x2="109.2" y2="124.4" stroke="#3f6212" stroke-width="2.5" marker-end="url(#arr)"/>
+<line x1="272.0" y1="230.0" x2="396.0" y2="230.0" stroke="#3f6212" stroke-width="2.5" marker-end="url(#arr)"/>
+<line x1="420.0" y1="102.0" x2="420.0" y2="206.0" stroke="#3f6212" stroke-width="2.5" marker-end="url(#arr)"/>
+<circle cx="90" cy="110" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="90" y="117" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">A</text>
+<circle cx="250" cy="70" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="250" y="77" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">B</text>
+<circle cx="250" cy="230" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="250" y="237" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">C</text>
+<circle cx="420" cy="230" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="420" y="237" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">D</text>
+<circle cx="420" cy="80" r="22" fill="#dcfce7" stroke="#3f6212" stroke-width="2.5"/><text x="420" y="87" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f2937">E</text>
+
+</svg>

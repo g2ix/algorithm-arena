@@ -7,6 +7,9 @@ import { answerFields, type ItemRow, type Phase, type SubmissionRow } from './ty
 
 // ---------------------------------------------------------------- helpers
 
+/** SQL condition on score_events `e`: only points from this game's selected questions (or general adjustments) count. */
+const COUNTED = `(e.item_id is null or exists (select 1 from session_items si where si.session_id = e.session_id and si.item_id = e.item_id))`;
+
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export function genCode(len = 6) {
   let s = '';
@@ -95,7 +98,7 @@ async function teamScores(sessionId: string): Promise<TeamScore[]> {
   const sums = await q<{ team_id: string; round: string | null; pts: number }>(
     `select e.team_id, i.round_id as round, sum(e.points)::int as pts
        from score_events e left join items i on i.id = e.item_id
-      where e.session_id = $1 group by e.team_id, i.round_id`, [sessionId]);
+      where e.session_id = $1 and ${COUNTED} group by e.team_id, i.round_id`, [sessionId]);
   const mem = await q<{ team_id: string; display_name: string }>(
     `select team_id, display_name from members where session_id = $1 order by joined_at`, [sessionId]);
   const out: TeamScore[] = teams.map((t) => {
@@ -146,7 +149,7 @@ export async function boardView(code: string) {
     : [];
   const recent = await q<{ team: string; color: string; points: number; reason: string; created_at: Date }>(
     `select t.name as team, t.color, e.points, e.reason, e.created_at from score_events e join teams t on t.id = e.team_id
-      where e.session_id = $1 order by e.created_at desc limit 8`, [s.id]);
+      where e.session_id = $1 and ${COUNTED} order by e.created_at desc limit 8`, [s.id]);
   const firstCorrect = it && g?.phase === 'revealed'
     ? (await q<{ team_id: string }>(`select team_id from submissions where session_id=$1 and item_id=$2 and rank=1`, [s.id, it.id]))[0]?.team_id ?? null
     : null;
@@ -231,7 +234,7 @@ export async function memberView(token: string | null) {
   const powerups = await q<{ type: string; status: string; item_id: string | null; hint: unknown }>(
     `select type, status, item_id, hint from powerups where session_id = $1 and team_id = $2`, [s.id, m.team_id]);
   const feed = await q<{ points: number; reason: string; created_at: Date }>(
-    `select points, reason, created_at from score_events where session_id = $1 and team_id = $2 order by created_at desc limit 40`,
+    `select e.points, e.reason, e.created_at from score_events e where e.session_id = $1 and e.team_id = $2 and ${COUNTED} order by e.created_at desc limit 40`,
     [s.id, m.team_id]);
   return {
     me: { name: m.display_name },
@@ -378,7 +381,7 @@ export async function listSessions(classId?: string) {
       where ($1::uuid is null or s.class_id = $1) order by s.created_at desc`, [classId ?? null]);
 }
 
-export async function createSession(input: { classId: string; title?: string; teamMode?: string; maxTeamSize?: number; teams?: string[] }) {
+export async function createSession(input: { classId: string; title?: string; teamMode?: string; maxTeamSize?: number; teams?: string[]; itemIds?: unknown }) {
   return tx(async (db) => {
     const [c] = await db(`select id from classes where id=$1`, [input.classId]);
     if (!c) throw new HttpError(400, 'Pick a class.');
@@ -390,6 +393,7 @@ export async function createSession(input: { classId: string; title?: string; te
       `insert into sessions (class_id, code, title, team_mode, max_team_size) values ($1,$2,$3,$4,$5) returning id`,
       [input.classId, code, clean(input.title, 60) || 'Algorithm Arena', mode, size]);
     await db(`insert into game_state (session_id) values ($1)`, [s.id]);
+    await setSessionItems(db, s.id, input.itemIds);
     const names = (input.teams ?? []).map((t) => clean(t, 24)).filter(Boolean);
     let i = 0;
     for (const n of [...new Set(names)]) {
@@ -401,7 +405,29 @@ export async function createSession(input: { classId: string; title?: string; te
   });
 }
 
-export async function updateSession(id: string, patch: { status?: string; title?: string; teamMode?: string; maxTeamSize?: number }) {
+/** Replace the game's question list. No list given = every active question. */
+async function setSessionItems(db: Query, sessionId: string, itemIds: unknown) {
+  const all = await db<{ id: string }>(`select id from items where active`);
+  let ids = all.map((i) => i.id);
+  if (Array.isArray(itemIds)) {
+    const want = new Set(itemIds.map(String));
+    const known = await db<{ id: string }>(`select id from items`);
+    ids = known.map((i) => i.id).filter((id) => want.has(id));
+    if (!ids.length) throw new HttpError(400, 'Pick at least one question for this game.');
+  }
+  await db(`delete from session_items where session_id = $1`, [sessionId]);
+  await db(`insert into session_items (session_id, item_id) select $1, unnest(string_to_array($2, ','))::uuid`, [sessionId, ids.join(',')]);
+}
+
+export async function setGameItems(sessionId: string, itemIds: unknown) {
+  await tx(async (db) => {
+    await setSessionItems(db, sessionId, itemIds);
+    await bump(db, sessionId);
+  });
+}
+
+export async function updateSession(id: string, patch: { status?: string; title?: string; teamMode?: string; maxTeamSize?: number; itemIds?: unknown }) {
+  if (patch.itemIds !== undefined) await setGameItems(id, patch.itemIds);
   if (patch.status && ['lobby', 'live', 'ended'].includes(patch.status)) await q(`update sessions set status=$1 where id=$2`, [patch.status, id]);
   if (patch.title) await q(`update sessions set title=$1 where id=$2`, [clean(patch.title, 60), id]);
   if (patch.teamMode) await q(`update sessions set team_mode=$1 where id=$2`, [patch.teamMode === 'student' ? 'student' : 'teacher', id]);
@@ -451,7 +477,9 @@ export async function moveMember(sessionId: string, memberId: string, teamId: st
 export async function adminSessionView(id: string) {
   const s = await sessionById(id);
   const g = await state(id);
-  const items = await q<ItemRow>(`select * from items where active order by sort`);
+  const items = await q<ItemRow & { selected: boolean }>(
+    `select i.*, exists (select 1 from session_items si where si.session_id = $1 and si.item_id = i.id) as selected
+       from items i order by i.sort`, [id]);
   const it = items.find((i) => i.id === g?.current_item_id) ?? null;
   const teams = await teamScores(id);
   const members = await q(`select id, team_id, display_name, joined_at from members where session_id=$1 order by joined_at`, [id]);
@@ -468,7 +496,7 @@ export async function adminSessionView(id: string) {
     session: s,
     state: { ...stateView(g, it), currentItemId: it?.id ?? null },
     current: it ? { ...it } : null,
-    items: items.map((i) => ({ id: i.id, round: i.round_id, label: i.label, prompt: i.prompt, manual: i.answer_key.type === 'manual', points: i.points, timeLimit: i.time_limit_s, answerText: i.answer_text })),
+    items: items.filter((i) => i.active || i.selected).map((i) => ({ id: i.id, round: i.round_id, label: i.label, prompt: i.prompt, manual: i.answer_key.type === 'manual', points: i.points, timeLimit: i.time_limit_s, answerText: i.answer_text, selected: i.selected })),
     scoredItemIds: done.map((d) => d.item_id),
     teams,
     members,
@@ -485,6 +513,8 @@ export async function control(sessionId: string, action: string, itemId?: string
     case 'select': {
       const it = await itemById(itemId ?? null);
       if (!it) throw new HttpError(400, 'Pick an item.');
+      const inGame = await q(`select 1 from session_items where session_id=$1 and item_id=$2`, [sessionId, it.id]);
+      if (!inGame.length) throw new HttpError(400, 'That question is not part of this game. Add it in the Questions tab first.');
       await q(`update game_state set current_item_id=$1, phase=$2, opened_at=null, closes_at=null where session_id=$3`,
         [it.id, (await alreadyRevealed(sessionId, it.id)) ? 'revealed' : 'idle', sessionId]);
       await q(`update sessions set status='live' where id=$1 and status='lobby'`, [sessionId]);
@@ -670,6 +700,7 @@ export async function report(classId: string) {
        from items i
        join submissions sub on sub.item_id = i.id
        join sessions s on s.id = sub.session_id
+       join session_items si on si.session_id = s.id and si.item_id = i.id
       where s.class_id = $1 and i.answer_type <> 'manual'
       group by i.id order by i.sort`, [classId]);
   return { sessions, standings, items };

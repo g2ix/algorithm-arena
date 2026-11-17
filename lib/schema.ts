@@ -1,6 +1,6 @@
 // Database schema. Runs automatically the first time the app talks to the
 // database (see lib/db.ts), and is also saved as supabase/migrations/001_init.sql.
-export const SCHEMA_VERSION = '2';
+export const SCHEMA_VERSION = '3';
 
 export const SCHEMA_SQL = `
 create table if not exists app_meta (
@@ -120,6 +120,22 @@ create table if not exists powerups (
   unique (session_id, team_id, type)
 );
 alter table powerups add column if not exists hint jsonb;   -- Lifeline: the system's hint for the team's draft
+
+-- Which questions are part of each game. Created once; existing games get
+-- every question that was active at that moment, so their totals don't change.
+do $$
+begin
+  if to_regclass('public.session_items') is null then
+    create table session_items (
+      session_id uuid not null references sessions(id) on delete cascade,
+      item_id uuid not null references items(id) on delete cascade,
+      primary key (session_id, item_id)
+    );
+    insert into session_items (session_id, item_id)
+      select s.id, i.id from sessions s cross join items i where i.active;
+  end if;
+end $$;
+alter table session_items enable row level security;
 
 -- Supabase exposes tables to browsers through its REST API. Row level
 -- security with no policy blocks all of that, so answer keys stay private.

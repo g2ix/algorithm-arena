@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client';
+import { QuestionPicker, type PickItem } from '@/components/QuestionPicker';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, Empty, ErrorNote, Input } from '@/components/ui';
 
@@ -136,13 +137,23 @@ function NewSession({ classes, reload }: { classes: Cls[]; reload: () => void })
   const [teams, setTeams] = useState('Team 1\nTeam 2\nTeam 3\nTeam 4\nTeam 5\nTeam 6');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [bank, setBank] = useState<PickItem[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [showPicker, setShowPicker] = useState(false);
+  useEffect(() => {
+    api<{ id: string; round_id: string; label: string; prompt: string; active: boolean }[]>('/api/admin/items').then((rows) => {
+      const list = rows.filter((r) => r.active).map((r) => ({ id: r.id, round: r.round_id, label: r.label, prompt: r.prompt }));
+      setBank(list);
+      setPicked(new Set(list.map((i) => i.id)));
+    }).catch(() => setBank([]));
+  }, []);
   return (
     <Card className="glow">
       <h2 className="mb-3 text-lg font-bold">Start a new game</h2>
       <form className="flex flex-col gap-3" onSubmit={async (e) => {
         e.preventDefault(); setErr(''); setBusy(true);
         try {
-          const r = await api<{ id: string }>('/api/admin/sessions', { json: { classId, title, teamMode: mode, maxTeamSize: size, teams: mode === 'teacher' ? teams.split('\n') : [] } });
+          const r = await api<{ id: string }>('/api/admin/sessions', { json: { classId, title, teamMode: mode, maxTeamSize: size, teams: mode === 'teacher' ? teams.split('\n') : [], itemIds: bank?.length ? [...picked] : undefined } });
           location.href = `/admin/session/${r.id}`;
         } catch (e2) { setErr((e2 as Error).message); setBusy(false); }
         reload();
@@ -173,8 +184,16 @@ function NewSession({ classes, reload }: { classes: Cls[]; reload: () => void })
               className="rounded-xl border border-line bg-ink/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-brand" />
           </label>
         )}
+        <div className="flex flex-col gap-2 text-sm">
+          <div className="flex items-center justify-between gap-2 text-muted">
+            <span>Questions in this game: <b className="text-white">{bank ? `${picked.size} of ${bank.length}` : '…'}</b></span>
+            <button type="button" className="text-brand-2 hover:underline" onClick={() => setShowPicker(!showPicker)}>{showPicker ? 'Hide list' : 'Choose questions'}</button>
+          </div>
+          {showPicker && bank && <QuestionPicker items={bank} selected={picked} onChange={setPicked} maxHeight="45vh" />}
+          <p className="text-xs text-muted">Only the chosen questions appear on your control screen and count toward team totals. You can change this later in the game&apos;s Questions tab.</p>
+        </div>
         <ErrorNote>{err}</ErrorNote>
-        <Button type="submit" size="lg" disabled={busy || !classId}>Create game</Button>
+        <Button type="submit" size="lg" disabled={busy || !classId || (!!bank?.length && picked.size === 0)}>Create game</Button>
       </form>
     </Card>
   );
