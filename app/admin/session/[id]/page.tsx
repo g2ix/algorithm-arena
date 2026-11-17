@@ -5,11 +5,12 @@ import { useState } from 'react';
 import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, cx, Dot, Empty, ErrorNote, Input, ROUND_META, signed, Spinner } from '@/components/ui';
-import type { StateView, TeamScore } from '@/components/views';
+import { POWERUP_INFO } from '@/components/powerups';
+import type { LifelineHint, StateView, TeamScore } from '@/components/views';
 
 type Item = { id: string; round: string; label: string; prompt: string; manual: boolean; points: Record<string, number | boolean>; timeLimit: number; answerText: string };
 type Sub = { id: string; team_id: string; answer_raw: string[] | null; wager: number | null; is_correct: boolean | null; override: boolean; rank: number | null; submitted_at: string | null; member: string | null };
-type Pow = { id: string; team_id: string; team: string; type: string; status: string };
+type Pow = { id: string; team_id: string; team: string; type: string; status: string; item_id: string | null; hint: LifelineHint | null };
 type Ev = { id: string; team_id: string; item_id: string | null; tag: string; points: number; reason: string; created_at: string };
 type Admin = {
   session: { id: string; code: string; title: string; status: string; class_name: string; team_mode: string; max_team_size: number };
@@ -247,7 +248,7 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
             <h3 className="mb-2 font-bold text-gold">Power-up requests</h3>
             {pending.map((p) => (
               <div key={p.id} className="flex items-center justify-between gap-2 py-1 text-sm">
-                <span><b>{p.team}</b> · {p.type}</span>
+                <span><b>{p.team}</b> · {POWERUP_INFO[p.type]?.icon} {POWERUP_INFO[p.type]?.name ?? p.type}</span>
                 <span className="flex gap-1">
                   <Button size="sm" variant="success" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: true })}>OK</Button>
                   <Button size="sm" variant="ghost" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: false })}>No</Button>
@@ -426,33 +427,44 @@ function PowerPoints({ data, call, base }: { data: Admin; call: Call; base: stri
       <Card>
         <h2 className="mb-3 text-lg font-bold">Power-ups</h2>
         <p className="mb-3 text-sm text-muted">
-          Teams request a card from their pad. <b>Double Down</b> becomes active for the next R1 or R2 item you reveal.
-          For <b>Steal</b> and <b>Lifeline</b>, approve the card, then run it in class (award steal points with an adjustment).
+          Each team plays one card per game. Most cards run by themselves: <b>Lifeline</b> gives the team an automatic hint based on
+          their current draft, and <b>Shield</b>, <b>Fast Pass</b>, <b>High Roller</b> and <b>Second Chance</b> are applied by the scoring.
+          Only <b>Double Down</b> and <b>Steal</b> wait for your OK (award steal points with an adjustment).
         </p>
         <table className="w-full text-sm">
-          <thead className="text-left text-xs text-muted"><tr><th className="py-1">Team</th><th>Lifeline</th><th>Double</th><th>Steal</th></tr></thead>
+          <thead className="text-left text-xs text-muted"><tr><th className="py-1">Team</th><th>Card played</th><th>Status</th></tr></thead>
           <tbody className="divide-y divide-line">
-            {data.teams.map((t) => (
-              <tr key={t.id}>
-                <td className="py-2 font-semibold">{t.name}</td>
-                {['lifeline', 'double', 'steal'].map((ty) => {
-                  const p = data.powerups.find((x) => x.team_id === t.id && x.type === ty);
-                  if (!p) return <td key={ty} />;
-                  return (
-                    <td key={ty}>
-                      {p.status === 'requested' ? (
-                        <span className="flex gap-1">
-                          <Button size="sm" variant="success" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: true })}>Approve</Button>
-                          <Button size="sm" variant="ghost" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: false })}>Deny</Button>
-                        </span>
-                      ) : (
-                        <Badge color={p.status === 'available' ? undefined : p.status === 'armed' ? '#a78bfa' : '#94a3b8'}>{p.status}</Badge>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {data.teams.map((t) => {
+              const p = data.powerups.find((x) => x.team_id === t.id && x.status !== 'available');
+              const info = p ? POWERUP_INFO[p.type] : null;
+              const on = p?.item_id ? data.items.find((i) => i.id === p.item_id) : null;
+              return (
+                <tr key={t.id} className="align-top">
+                  <td className="py-2 font-semibold">{t.name}</td>
+                  <td className="py-2">
+                    {p ? <span style={{ color: info?.color }}>{info?.icon} {info?.name ?? p.type}</span> : <span className="text-muted">—</span>}
+                    {on && <span className="text-muted"> · {on.round} {on.label}</span>}
+                    {p?.hint && (
+                      <div className="mt-1 text-xs text-muted">
+                        {p.hint.hints.map((h, i) => <div key={i}>{h.label ? `${h.label}: ` : ''}<span className="font-mono">{p.hint!.draft[i]}</span> → {h.text}</div>)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2">
+                    {p?.status === 'requested' ? (
+                      <span className="flex gap-1">
+                        <Button size="sm" variant="success" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: true })}>Approve</Button>
+                        <Button size="sm" variant="ghost" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: false })}>Deny</Button>
+                      </span>
+                    ) : p ? (
+                      <Badge color={p.status === 'armed' ? '#a78bfa' : '#94a3b8'}>{p.status === 'armed' ? 'waiting for next item' : p.status}</Badge>
+                    ) : (
+                      <Badge>available</Badge>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>

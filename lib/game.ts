@@ -1,5 +1,6 @@
 import { HttpError, newDeviceToken } from './auth';
 import { q, tx, type Query } from './db';
+import { suggestHint } from './hints';
 import { scoreItem } from './scoring';
 import { TEAM_COLORS } from './seed';
 import { answerFields, type ItemRow, type Phase, type SubmissionRow } from './types';
@@ -14,8 +15,10 @@ export function genCode(len = 6) {
 }
 
 const ROUND_KEYS = ['R1', 'R2', 'R3', 'R4', 'R5', 'Other'] as const;
-export const POWERUPS = ['lifeline', 'double', 'steal'] as const;
+export const POWERUPS = ['lifeline', 'double', 'steal', 'shield', 'fast', 'highroller', 'retry'] as const;
 export type PowerupType = (typeof POWERUPS)[number];
+/** Cards the teacher must approve. Every other card is applied by the system instantly. */
+const NEEDS_APPROVAL: PowerupType[] = ['double', 'steal'];
 
 function clean(s: unknown, max = 40) {
   return String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -147,9 +150,13 @@ export async function boardView(code: string) {
   const firstCorrect = it && g?.phase === 'revealed'
     ? (await q<{ team_id: string }>(`select team_id from submissions where session_id=$1 and item_id=$2 and rank=1`, [s.id, it.id]))[0]?.team_id ?? null
     : null;
+  const plays = await q<{ team: string; color: string; type: string; at: Date }>(
+    `select t.name as team, t.color, p.type, p.requested_at as at from powerups p join teams t on t.id = p.team_id
+      where p.session_id = $1 and p.status <> 'available' and p.requested_at is not null order by p.requested_at desc limit 3`, [s.id]);
   return {
     session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status },
     state: stateView(g, it),
+    plays,
     teams: await teamScores(s.id),
     answered,
     firstCorrect,
@@ -221,8 +228,8 @@ export async function memberView(token: string | null) {
     ? (await q<{ pts: number }>(`select coalesce(sum(points),0)::int as pts from score_events where session_id=$1 and item_id=$2 and team_id=$3`,
         [s.id, it.id, m.team_id]))[0].pts
     : null;
-  const powerups = await q<{ type: string; status: string }>(
-    `select type, status from powerups where session_id = $1 and team_id = $2`, [s.id, m.team_id]);
+  const powerups = await q<{ type: string; status: string; item_id: string | null; hint: unknown }>(
+    `select type, status, item_id, hint from powerups where session_id = $1 and team_id = $2`, [s.id, m.team_id]);
   const feed = await q<{ points: number; reason: string; created_at: Date }>(
     `select points, reason, created_at from score_events where session_id = $1 and team_id = $2 order by created_at desc limit 40`,
     [s.id, m.team_id]);
@@ -277,7 +284,8 @@ export async function lockWager(token: string | null, wager: unknown) {
   if (!it || !it.points.wager) throw new HttpError(400, 'This item has no wager.');
   if (g.phase !== 'wager') throw new HttpError(400, 'Wagers are closed for this item.');
   const w = Math.round(Number(wager));
-  if (!(w >= 1 && w <= 5)) throw new HttpError(400, 'Wager must be 1 to 5.');
+  const cap = (await highRollers(m.session_id, it.id)).has(m.team_id) ? 10 : 5;
+  if (!(w >= 1 && w <= cap)) throw new HttpError(400, `Wager must be 1 to ${cap}.`);
   return tx(async (db) => {
     const res = await db(
       `insert into submissions (session_id, item_id, team_id, member_id, wager, wager_at) values ($1,$2,$3,$4,$5, now())
@@ -288,17 +296,55 @@ export async function lockWager(token: string | null, wager: unknown) {
   });
 }
 
-export async function requestPowerup(token: string | null, type: unknown) {
+export async function requestPowerup(token: string | null, type: unknown, answers?: unknown) {
   const m = await memberByToken(token);
   if (!POWERUPS.includes(type as PowerupType)) throw new HttpError(400, 'Unknown power-up.');
+  const t = type as PowerupType;
+  const g = await state(m.session_id);
+  const it = await itemById(g?.current_item_id ?? null);
+  const autoItemOpen = !!it && it.answer_key.type !== 'manual' && g.phase === 'open';
   return tx(async (db) => {
-    const used = await db(`select 1 from powerups where session_id=$1 and team_id=$2 and status <> 'available'`, [m.session_id, m.team_id]);
+    // Teams created before a card existed get its row on first use.
+    await db(`insert into powerups (session_id, team_id, type) values ($1,$2,$3) on conflict do nothing`, [m.session_id, m.team_id, t]);
+    const used = await db(`select 1 from powerups where session_id=$1 and team_id=$2 and status <> 'available' for update`, [m.session_id, m.team_id]);
     if (used.length) throw new HttpError(409, 'Your team already used its one power-up.');
-    await db(`update powerups set status='requested', requested_at=now() where session_id=$1 and team_id=$2 and type=$3`,
-      [m.session_id, m.team_id, type]);
+    const set = (status: string, extra = '', params: unknown[] = []) =>
+      db(`update powerups set status='${status}', requested_at=now()${extra} where session_id=$1 and team_id=$2 and type=$3`,
+        [m.session_id, m.team_id, t, ...params]);
+
+    let result: Record<string, unknown> = { ok: true };
+    if (NEEDS_APPROVAL.includes(t)) {
+      await set('requested');
+    } else if (t === 'lifeline') {
+      if (!autoItemOpen) throw new HttpError(400, 'Use Lifeline while a question is open for answering.');
+      const [sub] = await db<{ answer_raw: unknown }>(`select answer_raw from submissions where session_id=$1 and item_id=$2 and team_id=$3`, [m.session_id, it!.id, m.team_id]);
+      if (sub?.answer_raw) throw new HttpError(400, 'Your team already submitted this one. Lifeline checks a draft before you submit.');
+      const fields = answerFields(it!.answer_key);
+      const list = Array.isArray(answers) ? answers.map((a) => clean(a, 300)) : [];
+      if (list.length !== fields.length || list.every((a) => !a)) throw new HttpError(400, 'Type your best guess first: the lifeline checks what you have so far.');
+      const hint = { by: m.display_name, draft: list, hints: suggestHint(it!.answer_key, list) };
+      await set('used', `, used_at=now(), item_id=$4, hint=$5::text::jsonb`, [it!.id, JSON.stringify(hint)]);
+      result = { ok: true, hint };
+    } else if (t === 'retry') {
+      if (!autoItemOpen) throw new HttpError(400, 'Use Second Chance while a question is open for answering.');
+      const cleared = await db(`update submissions set answer_raw=null, member_id=null, submitted_at=null, is_correct=null, rank=null, override=false
+                                 where session_id=$1 and item_id=$2 and team_id=$3 and answer_raw is not null returning id`, [m.session_id, it!.id, m.team_id]);
+      if (!cleared.length) throw new HttpError(400, 'Second Chance erases a submitted answer. Submit first, then use it if you change your mind.');
+      await set('used', `, used_at=now(), item_id=$4`, [it!.id]);
+    } else if (t === 'highroller' && it?.points.wager && g.phase === 'wager') {
+      await set('used', `, used_at=now(), item_id=$4`, [it.id]);  // applies to the wager happening right now
+    } else {
+      await set('armed');  // shield, fast, highroller: waits for the next eligible item
+    }
     await bump(db, m.session_id);
-    return { ok: true };
+    return result;
   });
+}
+
+async function highRollers(sessionId: string, itemId: string) {
+  const rows = await q<{ team_id: string }>(
+    `select team_id from powerups where session_id=$1 and type='highroller' and status='used' and item_id=$2`, [sessionId, itemId]);
+  return new Set(rows.map((r) => r.team_id));
 }
 
 // ---------------------------------------------------------------- teacher: classes & sessions
@@ -447,6 +493,7 @@ export async function control(sessionId: string, action: string, itemId?: string
     case 'wager': {
       const it = await itemById(g.current_item_id);
       if (!it?.points.wager) throw new HttpError(400, 'Only Map Heist items take wagers.');
+      await q(`update powerups set status='used', item_id=$1, used_at=now() where session_id=$2 and type='highroller' and status='armed'`, [it.id, sessionId]);
       await q(`update game_state set phase='wager' where session_id=$1`, [sessionId]);
       break;
     }
@@ -477,7 +524,8 @@ export async function control(sessionId: string, action: string, itemId?: string
       await tx(async (db) => {
         await db(`delete from submissions where session_id=$1 and item_id=$2`, [sessionId, g.current_item_id]);
         await db(`delete from score_events where session_id=$1 and item_id=$2 and source in ('auto','powerup')`, [sessionId, g.current_item_id]);
-        await db(`update powerups set status='armed', item_id=null, used_at=null where session_id=$1 and item_id=$2 and type='double'`, [sessionId, g.current_item_id]);
+        await db(`update powerups set status='armed', item_id=null, used_at=null where session_id=$1 and item_id=$2 and type in ('double','shield','fast','highroller')`, [sessionId, g.current_item_id]);
+        await db(`update powerups set status='available', item_id=null, used_at=null, requested_at=null, hint=null where session_id=$1 and item_id=$2 and type in ('lifeline','retry')`, [sessionId, g.current_item_id]);
         await db(`update game_state set phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
       });
       break;
@@ -500,15 +548,17 @@ export async function rescore(sessionId: string, itemId: string, consumeArmed = 
   const it = await itemById(itemId);
   if (!it || it.answer_key.type === 'manual') return;
   await tx(async (db) => {
-    if (consumeArmed && !it.points.wager) {
-      await db(`update powerups set status='used', item_id=$1, used_at=now() where session_id=$2 and type='double' and status='armed'`, [itemId, sessionId]);
+    if (consumeArmed) {
+      const types = it.points.wager ? `('shield')` : `('double','fast','shield')`;
+      await db(`update powerups set status='used', item_id=$1, used_at=now() where session_id=$2 and type in ${types} and status='armed'`, [itemId, sessionId]);
     }
-    const doubles = await db<{ team_id: string }>(
-      `select team_id from powerups where session_id=$1 and type='double' and status='used' and item_id=$2`, [sessionId, itemId]);
+    const active = await db<{ team_id: string; type: string }>(
+      `select team_id, type from powerups where session_id=$1 and status='used' and item_id=$2`, [sessionId, itemId]);
+    const teamsWith = (ty: string) => new Set(active.filter((p) => p.type === ty).map((p) => p.team_id));
     const subs = await db<SubmissionRow>(
       `select id, team_id, answer_raw, wager, is_correct, override, submitted_at from submissions where session_id=$1 and item_id=$2`,
       [sessionId, itemId]);
-    const result = scoreItem(it, subs, new Set(doubles.map((d) => d.team_id)));
+    const result = scoreItem(it, subs, { double: teamsWith('double'), shield: teamsWith('shield'), fast: teamsWith('fast'), highRoller: teamsWith('highroller') });
     await db(`delete from score_events where session_id=$1 and item_id=$2 and source in ('auto','powerup')`, [sessionId, itemId]);
     for (const s of result.submissions) {
       await db(`update submissions set is_correct=$1, rank=$2 where id=$3`, [s.is_correct, s.rank, s.id]);

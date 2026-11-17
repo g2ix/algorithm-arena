@@ -58,7 +58,7 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 3. **For each item** in the control screen: pick it on the left → (R3: **Start wagers**) → **Open answering** → **Reveal & score** → **Next**.
 4. Use **✓ / ✗** beside any answer to accept a valid alternative or reject one; scores are recalculated instantly.
 5. **Encode R4 / R5:** tick CodeChum problems as teams pass them, tap ⭐ for the first solver, and tap the team that wins each bug.
-6. **Power-ups & points:** approve power-up requests and add or remove points with a reason (for example a Steal).
+6. **Power-ups & points:** approve Double Down / Steal requests and add or remove points with a reason (for example a Steal). Every other card runs by itself.
 7. **End game** shows the champion on the board. Download the CSV from the control screen or the class report.
 
 ### Scoring rules (editable per item in the question bank)
@@ -70,7 +70,20 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 | R3 Map Heist | Correct + wager, wrong − wager; no wager locked counts as 1 |
 | R4 Code Sprint | Bronze 5, Silver 10, Gold 15, Platinum 20, +3 first solver |
 | R5 Bug Hunt | +5 to the team you tap |
-| Double Down | Doubles the team's result on the next R1/R2 item you reveal, win or lose |
+
+### Power-up cards (each team plays one per game)
+
+| Card | Effect | Teacher OK? |
+|---|---|---|
+| 🛟 Lifeline | The system checks the team's current draft and gives a hint (e.g. "first 3 items are right; the 4th is where it goes wrong", "too high", "C-E is not one of the roads") without revealing missing answer pieces | No |
+| 🔁 Second Chance | Erases the team's submitted answer while answering is open so they can resubmit (new time) | No |
+| ⚡ Fast Pass | A correct answer on the next R1/R2 item earns first-place points | No |
+| 2× Double Down | Doubles the team's result on the next R1/R2 item you reveal, win or lose | Yes |
+| 🛡️ Shield | Cancels any net loss on the next R1/R2/R3 item revealed (wrong answer or lost wager) | No |
+| 🎰 High Roller | Raises the wager cap from 5 to 10 on the next Map Heist item | No |
+| 🦝 Steal | The team tries an item another team got wrong; you award points with an adjustment | Yes |
+
+The projector shows a big announcement whenever a team plays a card.
 
 Only a team's **first** submission counts, judged by the server's clock. Answers are flexible: `A, B, D`, `a b d`, `A→B→D` and `ABD` all match `A B D`; road lists like `F-C, I-A` match in any order; cycles match in any rotation.
 
@@ -91,7 +104,8 @@ npm test                        # answer-checker and scoring tests
 app/                  pages and API routes (app/api/...)
 components/           shared UI, projector effects, view types
 lib/checkers.ts       answer normalizing and checking
-lib/scoring.ts        points per round, ranks, Double Down
+lib/scoring.ts        points per round, ranks, power-up effects
+lib/hints.ts          Lifeline hints from a team's draft answer
 lib/game.ts           all game logic and database queries
 lib/db.ts             Postgres connection + automatic setup
 lib/schema.ts         tables (also in supabase/migrations/001_init.sql)

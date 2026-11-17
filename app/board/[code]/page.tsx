@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtTime, useCountdown, useLive } from '@/lib/client';
 import { confetti, sound } from '@/components/fx';
 import { Badge, cx, Dot, Logo, ROUND_META, signed, Spinner } from '@/components/ui';
+import { POWERUP_INFO } from '@/components/powerups';
 import type { BoardView } from '@/components/views';
 
 const ROW = 76;
@@ -69,6 +70,7 @@ export default function BoardPage() {
         <Stage data={data} muted={muted} />
         <Leaderboard data={data} />
       </div>
+      <PowerupFlash data={data} muted={muted} />
     </main>
   );
 }
@@ -225,5 +227,35 @@ function Leaderboard({ data }: { data: BoardView }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Big announcement on the projector for a few seconds when a team plays a card. */
+function PowerupFlash({ data, muted }: { data: BoardView; muted: boolean }) {
+  const latest = data.plays[0];
+  const key = latest ? `${latest.team}|${latest.type}|${latest.at}` : null;
+  const seen = useRef<string | null | undefined>(undefined);
+  const [show, setShow] = useState<BoardView['plays'][number] | null>(null);
+  useEffect(() => {
+    if (seen.current === undefined) { seen.current = key; return; } // don't replay old cards on page load
+    if (!key || key === seen.current) return;
+    seen.current = key;
+    setShow(latest);
+    if (!muted) sound('fanfare');
+    const t = setTimeout(() => setShow(null), 6000);
+    return () => clearTimeout(t);
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!show) return null;
+  const info = POWERUP_INFO[show.type] ?? { name: show.type, icon: '★', color: '#a78bfa', text: '' };
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-black/40">
+      <div className="pop flex flex-col items-center gap-2 rounded-3xl border-2 bg-panel px-14 py-10 text-center"
+        style={{ borderColor: info.color, boxShadow: `0 0 80px ${info.color}88` }}>
+        <div className="text-8xl" style={{ color: info.color }}>{info.icon}</div>
+        <div className="text-2xl font-bold" style={{ color: show.color }}>{show.team}</div>
+        <div className="text-5xl font-black">plays {info.name}!</div>
+        <div className="text-xl text-muted">{info.text}</div>
+      </div>
+    </div>
   );
 }

@@ -1,20 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { TeamHeader } from '@/components/TeamHeader';
 import { Badge, Button, Card, cx, ErrorNote, Input, Logo, ROUND_META, signed, Spinner } from '@/components/ui';
-import type { MeView } from '@/components/views';
-
-const POWERUP_INFO: Record<string, { name: string; text: string; icon: string }> = {
-  lifeline: { name: 'Lifeline', text: 'One hint from the teacher', icon: '🛟' },
-  double: { name: 'Double Down', text: 'Doubles your next R1/R2 result, win or lose', icon: '2×' },
-  steal: { name: 'Steal', text: "Try an item another team got wrong", icon: '🦝' },
-};
+import { POWERUP_INFO, POWERUP_ORDER } from '@/components/powerups';
+import type { LifelineHint, MeView } from '@/components/views';
 
 export default function PlayPage() {
   const { data: me, error, reload } = useLive<MeView>('/api/me', (d) => d.session.id);
+  // The answer boxes' current text, so the Lifeline can check this draft.
+  const draft = useRef<string[]>([]);
 
   if (error?.status === 401) return <NotJoined />;
   if (!me) return <div className="grid min-h-dvh place-items-center"><Spinner /></div>;
@@ -22,8 +19,8 @@ export default function PlayPage() {
     <main className="min-h-dvh pb-10">
       <TeamHeader data={me} />
       <div className="mx-auto flex max-w-xl flex-col gap-4 px-4 pt-4">
-        <Stage me={me} reload={reload} />
-        <Powerups me={me} reload={reload} />
+        <Stage me={me} reload={reload} draft={draft} />
+        <Powerups me={me} reload={reload} draft={draft} />
       </div>
     </main>
   );
@@ -42,7 +39,7 @@ function NotJoined() {
   );
 }
 
-function Stage({ me, reload }: { me: MeView; reload: () => void }) {
+function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: RefObject<string[]> }) {
   const { state, mine } = me;
   const item = state.item;
   const left = useCountdown(state.phase === 'open' ? state.closesAt : null, state.serverNow);
@@ -68,6 +65,7 @@ function Stage({ me, reload }: { me: MeView; reload: () => void }) {
   }
 
   const meta = ROUND_META[item.round];
+  const lifeline = me.powerups.find((p) => p.type === 'lifeline' && p.item_id === item.id && p.hint);
   return (
     <Card className="pop flex flex-col gap-4" key={item.id + state.phase}>
       <div className="flex items-center justify-between">
@@ -93,12 +91,13 @@ function Stage({ me, reload }: { me: MeView; reload: () => void }) {
       ) : state.phase === 'wager' ? (
         <Wager me={me} reload={reload} />
       ) : state.phase === 'open' ? (
-        mine.answers ? <Submitted me={me} /> : <AnswerForm me={me} reload={reload} timeUp={left === 0} />
+        mine.answers ? <Submitted me={me} /> : <AnswerForm me={me} reload={reload} timeUp={left === 0} draft={draft} />
       ) : state.phase === 'closed' ? (
         mine.answers ? <Submitted me={me} /> : <p className="text-muted">Your team didn&apos;t answer this one.</p>
       ) : (
         <Result me={me} />
       )}
+      {lifeline?.hint && state.phase !== 'revealed' && <HintCard hint={lifeline.hint} />}
     </Card>
   );
 }
@@ -115,6 +114,8 @@ function ManualNote({ round, revealed, answer }: { round: string; revealed: bool
 }
 
 function Wager({ me, reload }: { me: MeView; reload: () => void }) {
+  const high = me.powerups.some((p) => p.type === 'highroller' && p.status === 'used' && p.item_id === me.state.item?.id);
+  const choices = Array.from({ length: high ? 10 : 5 }, (_, i) => i + 1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   if (me.mine.wager) {
@@ -129,8 +130,9 @@ function Wager({ me, reload }: { me: MeView; reload: () => void }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted">How many points will your team bet? Agree first: only one wager per team.</p>
+      {high && <p className="text-sm font-bold text-pink-300">🎰 High Roller: you can bet up to 10!</p>}
       <div className="grid grid-cols-5 gap-2">
-        {[1, 2, 3, 4, 5].map((n) => (
+        {choices.map((n) => (
           <Button key={n} variant="outline" size="lg" disabled={busy} className="text-2xl"
             onClick={async () => {
               setBusy(true); setErr('');
@@ -144,9 +146,12 @@ function Wager({ me, reload }: { me: MeView; reload: () => void }) {
   );
 }
 
-function AnswerForm({ me, reload, timeUp }: { me: MeView; reload: () => void; timeUp: boolean }) {
+function AnswerForm({ me, reload, timeUp, draft }: { me: MeView; reload: () => void; timeUp: boolean; draft: RefObject<string[]> }) {
   const fields = me.state.item!.fields;
-  const [vals, setVals] = useState<string[]>(() => fields.map(() => ''));
+  const [vals, _setVals] = useState<string[]>(() => fields.map(() => ''));
+  // Mirror into the ref right away so a Lifeline tap always checks what is on screen.
+  const setVals = (v: string[]) => { draft.current = v; _setVals(v); };
+  useEffect(() => () => { draft.current = []; }, [draft]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useEffect(() => setVals(fields.map(() => '')), [me.state.item!.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -214,39 +219,70 @@ function Result({ me }: { me: MeView }) {
   );
 }
 
-function Powerups({ me, reload }: { me: MeView; reload: () => void }) {
+function HintCard({ hint }: { hint: LifelineHint }) {
+  return (
+    <div className="pop rounded-xl border border-cyan-400/50 bg-cyan-400/10 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold text-cyan-200">🛟 Lifeline hint</span>
+        <span className="text-xs text-muted">checked {hint.by}&apos;s draft</span>
+      </div>
+      <ul className="mt-2 flex flex-col gap-2">
+        {hint.hints.map((h, i) => (
+          <li key={i} className="text-sm">
+            {h.label && <div className="text-xs font-semibold text-muted">{h.label}: <span className="font-mono">{hint.draft[i] || '(blank)'}</span></div>}
+            {!h.label && <div className="font-mono text-xs text-muted">{hint.draft[i]}</div>}
+            <div className="text-white">{h.text}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Powerups({ me, reload, draft: draftRef }: { me: MeView; reload: () => void; draft: RefObject<string[]> }) {
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
   const usedOne = me.powerups.some((p) => p.status !== 'available');
-  const order = ['lifeline', 'double', 'steal'];
+  const play = async (t: string) => {
+    const info = POWERUP_INFO[t];
+    const draft = draftRef.current;
+    if (t === 'lifeline' && !draft.some((d) => d.trim())) {
+      setErr('Type your best guess in the answer box first, then tap Lifeline to check it.');
+      return;
+    }
+    if (!confirm(`Play ${info.name}? Your team only gets one power-up per game.
+
+${info.when}`)) return;
+    setErr(''); setBusy(true);
+    try { await api('/api/powerup', { json: { type: t, answers: t === 'lifeline' ? draft : undefined } }); }
+    catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+    reload();
+  };
   return (
     <Card>
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-bold">Power-up cards</h3>
-        <span className="text-xs text-muted">One per game</span>
+        <span className="text-xs text-muted">Pick one per game</span>
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        {order.map((t) => {
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {POWERUP_ORDER.map((t) => {
           const p = me.powerups.find((x) => x.type === t);
           const info = POWERUP_INFO[t];
           const status = p?.status ?? 'available';
           return (
-            <button key={t} disabled={usedOne}
-              onClick={async () => {
-                if (!confirm(`Use ${info.name}? Your team only gets one power-up.`)) return;
-                setErr('');
-                try { await api('/api/powerup', { json: { type: t } }); } catch (e) { setErr((e as Error).message); }
-                reload();
-              }}
+            <button key={t} disabled={usedOne || busy} onClick={() => play(t)}
+              style={status !== 'available' ? { borderColor: info.color, boxShadow: `0 0 18px ${info.color}55` } : undefined}
               className={cx('flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition',
-                status === 'available' && !usedOne && 'border-line bg-ink/40 hover:border-brand',
-                status === 'requested' && 'border-gold bg-gold/10 pulse-ring',
-                status === 'armed' && 'border-brand bg-brand/15',
-                status === 'used' && 'border-line bg-white/5 opacity-60',
+                status === 'available' && !usedOne && 'border-line bg-ink/40 hover:-translate-y-0.5 hover:border-brand',
+                status === 'requested' && 'bg-gold/10 pulse-ring',
+                status === 'armed' && 'bg-brand/15',
+                status === 'used' && 'bg-white/5',
                 status === 'available' && usedOne && 'border-line opacity-30')}>
-              <span className="text-xl font-black">{info.icon}</span>
+              <span className="text-2xl font-black" style={{ color: info.color }}>{info.icon}</span>
               <span className="text-sm font-bold">{info.name}</span>
               <span className="text-[11px] leading-tight text-muted">
-                {status === 'requested' ? 'Waiting for teacher…' : status === 'armed' ? 'Active on next item' : status === 'used' ? 'Used' : info.text}
+                {status === 'requested' ? 'Waiting for teacher…' : status === 'armed' ? 'Active on next item' : status === 'used' ? 'Played!' : info.text}
               </span>
             </button>
           );

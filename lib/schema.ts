@@ -1,6 +1,6 @@
 // Database schema. Runs automatically the first time the app talks to the
 // database (see lib/db.ts), and is also saved as supabase/migrations/001_init.sql.
-export const SCHEMA_VERSION = '1';
+export const SCHEMA_VERSION = '2';
 
 export const SCHEMA_SQL = `
 create table if not exists app_meta (
@@ -112,13 +112,14 @@ create table if not exists powerups (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id) on delete cascade,
   team_id uuid not null references teams(id) on delete cascade,
-  type text not null,                            -- lifeline | double | steal
+  type text not null,                            -- lifeline | double | steal | shield | fast | highroller | retry
   status text not null default 'available',      -- available | requested | armed | used
   item_id uuid references items(id) on delete set null,
   requested_at timestamptz,
   used_at timestamptz,
   unique (session_id, team_id, type)
 );
+alter table powerups add column if not exists hint jsonb;   -- Lifeline: the system's hint for the team's draft
 
 -- Supabase exposes tables to browsers through its REST API. Row level
 -- security with no policy blocks all of that, so answer keys stay private.

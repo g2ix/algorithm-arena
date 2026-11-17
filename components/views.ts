@@ -16,15 +16,18 @@ export type MeView = {
   leader: { name: string; total: number } | null;
   state: StateView;
   mine: { answers: string[] | null; wager: number | null; by: string | null; correct: boolean | null; rank: number | null; points: number | null };
-  powerups: { type: string; status: string }[];
+  powerups: { type: string; status: string; item_id: string | null; hint: LifelineHint | null }[];
   feed: { points: number; reason: string; created_at: string }[];
 };
 
 export type BoardView = {
   session: { id: string; code: string; title: string; className: string; status: string };
   state: StateView;
+  plays: { team: string; color: string; type: string; at: string }[];
   teams: TeamScore[];
   answered: string[];
   firstCorrect: string | null;
   recent: { team: string; color: string; points: number; reason: string; created_at: string }[];
 };
+
+export type LifelineHint = { by: string; draft: string[]; hints: { label: string | null; text: string }[] };
