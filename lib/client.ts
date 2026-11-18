@@ -3,14 +3,28 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+/** A request that takes longer than this is given up on, so screens retry instead of spinning forever. */
+const REQUEST_TIMEOUT_MS = 15000;
+
 export async function api<T = any>(url: string, init?: RequestInit & { json?: unknown }): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    method: init?.method ?? (init?.json !== undefined ? 'POST' : 'GET'),
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
-    cache: 'no-store',
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      method: init?.method ?? (init?.json !== undefined ? 'POST' : 'GET'),
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
+      cache: 'no-store',
+      signal: init?.signal ?? ctrl.signal,
+    });
+  } catch (e) {
+    const slow = (e as Error).name === 'AbortError';
+    throw Object.assign(new Error(slow ? 'The server is taking too long. Try again in a moment.' : 'No connection to the server. Check your internet and try again.'), { status: 0 });
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
   return data as T;
