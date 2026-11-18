@@ -80,12 +80,19 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
   const { state } = data;
   const item = state.item;
   const left = useCountdown(state.phase === 'open' ? state.closesAt : null, state.serverNow);
+  const wagerLeft = useCountdown(state.phase === 'wager' ? state.wagerEndsAt : null, state.serverNow);
+  const startsIn = useCountdown(state.phase === 'ready' ? state.opensAt : null, state.serverNow);
   const lastTick = useRef<number | null>(null);
   useEffect(() => {
     if (left !== null && left <= 5 && left > 0 && left !== lastTick.current && !muted) sound('tick');
     if (left === 0 && lastTick.current && lastTick.current > 0 && !muted) sound('buzz');
     lastTick.current = left;
   }, [left, muted]);
+  const lastStart = useRef<number | null>(null);
+  useEffect(() => {
+    if (startsIn !== null && startsIn <= 3 && startsIn > 0 && startsIn !== lastStart.current && !muted) sound('tick');
+    lastStart.current = startsIn;
+  }, [startsIn, muted]);
 
   if (data.session.status === 'ended' && data.state.board === 'hidden') {
     return (
@@ -146,16 +153,36 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
             {left === 0 ? "TIME'S UP" : fmtTime(left)}
           </div>
         )}
-        {state.phase === 'wager' && <div className="pulse-ring rounded-2xl bg-gold/20 px-5 py-3 text-3xl font-black text-gold">PLACE YOUR WAGERS</div>}
+        {state.phase === 'wager' && (
+          <div className="pulse-ring flex items-center gap-4 rounded-2xl bg-gold/20 px-5 py-3 text-3xl font-black text-gold">
+            PLACE YOUR WAGERS
+            {wagerLeft !== null && <span className={cx('font-mono text-5xl tabular-nums', wagerLeft <= 5 && 'animate-pulse')}>{fmtTime(wagerLeft)}</span>}
+          </div>
+        )}
+        {state.phase === 'ready' && <div className="pulse-ring rounded-2xl bg-win/20 px-5 py-3 text-3xl font-black text-win">STARTS IN {startsIn ?? 0}</div>}
         {state.phase === 'closed' && <Badge className="px-4 py-2 text-xl">Answers locked</Badge>}
         {state.phase === 'idle' && <Badge className="px-4 py-2 text-xl">Up next</Badge>}
       </div>
 
       {item.hidden ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-line bg-white/[.03] text-center">
-          <div className="text-7xl">{state.phase === 'wager' ? '💰' : '🔒'}</div>
-          <div className="text-4xl font-black">{state.phase === 'wager' ? 'Lock in your wager!' : 'Get ready…'}</div>
-          <div className="text-xl text-muted">The question appears when answering opens.</div>
+          {state.phase === 'ready' ? (
+            <>
+              <div key={startsIn} className="pop font-mono text-[10rem] font-black leading-none tabular-nums text-win">{startsIn ?? 0}</div>
+              <div className="text-4xl font-black">Get ready!</div>
+              <div className="text-xl text-muted">Last chance to play a card. The question appears when the countdown ends.</div>
+            </>
+          ) : (
+            <>
+              <div className="text-7xl">{state.phase === 'wager' ? '💰' : '🔒'}</div>
+              <div className="text-4xl font-black">{state.phase === 'wager' ? 'Lock in your wager!' : 'Get ready…'}</div>
+              <div className="text-xl text-muted">
+                {state.phase === 'wager' && state.wagerEndsAt
+                  ? 'Then a short countdown, and the question appears. Play a card now if you want one!'
+                  : 'The question appears when answering opens.'}
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <p className="text-3xl font-bold leading-snug">{item.prompt}</p>

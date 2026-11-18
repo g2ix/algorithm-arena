@@ -43,8 +43,8 @@ export function Input({ className, ...p }: InputHTMLAttributes<HTMLInputElement>
   );
 }
 
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx('rounded-2xl border border-line bg-panel/80 backdrop-blur p-5', className)}>{children}</div>;
+export function Card({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
+  return <div id={id} className={cx('rounded-2xl border border-line bg-panel/80 backdrop-blur p-5', className)}>{children}</div>;
 }
 
 export function Badge({ children, color, className }: { children: ReactNode; color?: string; className?: string }) {

@@ -70,10 +70,27 @@ async function sessionById(id: string): Promise<SessionRow> {
   return s;
 }
 
-async function state(sessionId: string) {
-  const [g] = await q<{ current_item_id: string | null; phase: Phase; opened_at: Date | null; closes_at: Date | null; version: bigint; board: BoardMode }>(
-    `select current_item_id, phase, opened_at, closes_at, version, board from game_state where session_id = $1`, [sessionId]);
-  return g;
+type GameRow = {
+  current_item_id: string | null; phase: Phase; stored: Phase; opened_at: Date | null; closes_at: Date | null;
+  wager_ends_at: Date | null; version: bigint; board: BoardMode;
+};
+
+/**
+ * The phase right now. Timed steps run on the clock, with no request needed:
+ * a timed wager turns into the get-ready countdown when betting closes, and the
+ * countdown turns into open answering at opened_at.
+ */
+function livePhase(g: Omit<GameRow, 'phase'>): Phase {
+  const now = Date.now();
+  if (g.stored === 'wager' && g.wager_ends_at && g.opened_at && now >= +g.wager_ends_at) return now < +g.opened_at ? 'ready' : 'open';
+  if (g.stored === 'open' && g.opened_at && now < +g.opened_at) return 'ready';
+  return g.stored;
+}
+
+async function state(sessionId: string): Promise<GameRow> {
+  const [g] = await q<Omit<GameRow, 'phase'>>(
+    `select current_item_id, phase as stored, opened_at, closes_at, wager_ends_at, version, board from game_state where session_id = $1`, [sessionId]);
+  return g && { ...g, phase: livePhase(g) };
 }
 
 async function itemById(id: string | null): Promise<ItemRow | null> {
@@ -102,7 +119,7 @@ const ROUND_TITLES: Record<string, string> = { R1: 'Trace Race', R2: 'Human Tree
 function publicItem(it: ItemRow | null, phase: Phase) {
   if (!it) return null;
   const revealed = phase === 'revealed';
-  const hidden = it.answer_key.type !== 'manual' && (phase === 'idle' || phase === 'wager');
+  const hidden = it.answer_key.type !== 'manual' && (phase === 'idle' || phase === 'wager' || phase === 'ready');
   return {
     id: it.id,
     round: it.round_id,
@@ -151,11 +168,19 @@ async function teamScores(sessionId: string): Promise<TeamScore[]> {
   return out;
 }
 
-function stateView(g: Awaited<ReturnType<typeof state>>, it: ItemRow | null) {
+function stateView(g: GameRow | undefined, it: ItemRow | null) {
+  const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null);
+  const phase = g?.phase ?? 'idle';
+  const wagerEndsAt = phase === 'wager' ? iso(g?.wager_ends_at) : null;
+  const opensAt = (phase === 'wager' && wagerEndsAt) || phase === 'ready' ? iso(g?.opened_at) : null;
   return {
-    phase: g?.phase ?? 'idle',
-    item: publicItem(it, g?.phase ?? 'idle'),
-    closesAt: g?.closes_at ? new Date(g.closes_at).toISOString() : null,
+    phase,
+    item: publicItem(it, phase),
+    closesAt: iso(g?.closes_at),
+    wagerEndsAt,
+    opensAt,
+    // When the phase changes next on its own; screens reload at that moment.
+    nextAt: phase === 'wager' ? wagerEndsAt : phase === 'ready' ? opensAt : null,
     serverNow: new Date().toISOString(),
     version: String(g?.version ?? 0),
     board: g?.board ?? 'auto',
@@ -323,7 +348,7 @@ export async function submitAnswer(token: string | null, answers: unknown) {
   const g = await state(m.session_id);
   const it = await itemById(g?.current_item_id ?? null);
   if (!it || it.answer_key.type === 'manual') throw new HttpError(400, 'There is no question to answer right now.');
-  if (g.phase !== 'open') throw new HttpError(400, g.phase === 'wager' ? 'Lock your wager first; answering opens soon.' : 'Answering is closed.');
+  if (g.phase !== 'open') throw new HttpError(400, g.phase === 'wager' ? 'Lock your wager first; answering opens soon.' : g.phase === 'ready' ? 'Get ready: answering opens in a few seconds.' : 'Answering is closed.');
   if (g.closes_at && Date.now() > new Date(g.closes_at).getTime() + 1500) throw new HttpError(400, "Time's up!");
   const fields = answerFields(it.answer_key);
   const list = Array.isArray(answers) ? answers.map((a) => clean(a, 300)) : [];
@@ -352,7 +377,7 @@ export async function lockWager(token: string | null, wager: unknown) {
   const g = await state(m.session_id);
   const it = await itemById(g?.current_item_id ?? null);
   if (!it || !it.points.wager) throw new HttpError(400, 'This item has no wager.');
-  if (g.phase !== 'wager') throw new HttpError(400, 'Wagers are closed for this item.');
+  if (g.phase !== 'wager') throw new HttpError(400, g.phase === 'ready' || g.phase === 'open' ? 'Time is up for wagers: your team plays this one for 1 point.' : 'Wagers are closed for this item.');
   const w = Math.round(Number(wager));
   const cap = (await highRollers(m.session_id, it.id)).has(m.team_id) ? 10 : 5;
   if (!(w >= 1 && w <= cap)) throw new HttpError(400, `Wager must be 1 to ${cap}.`);
@@ -582,7 +607,16 @@ export async function adminSessionView(id: string) {
   };
 }
 
-export async function control(sessionId: string, action: string, itemId?: string, seconds?: number, board?: string) {
+export type ControlOpts = { itemId?: string; seconds?: number; board?: string; lead?: number; wagerSeconds?: number };
+
+const clampSecs = (v: unknown, lo: number, hi: number, dflt: number) => {
+  if (v === null || v === undefined || v === '') return dflt;
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+};
+
+export async function control(sessionId: string, action: string, opts: ControlOpts = {}) {
+  const { itemId, seconds, board } = opts;
   const g = await state(sessionId);
   if (!g) throw new HttpError(404, 'Session not found.');
   switch (action) {
@@ -593,7 +627,7 @@ export async function control(sessionId: string, action: string, itemId?: string
       if (!inGame.length) throw new HttpError(400, 'That question is not part of this game. Add it in the Questions tab first.');
       const revealed = await alreadyRevealed(sessionId, it.id);
       await tx(async (db) => {
-        await db(`update game_state set current_item_id=$1, phase=$2, opened_at=null, closes_at=null where session_id=$3`,
+        await db(`update game_state set current_item_id=$1, phase=$2, opened_at=null, closes_at=null, wager_ends_at=null where session_id=$3`,
           [it.id, revealed ? 'revealed' : 'idle', sessionId]);
         await db(`update sessions set status='live' where id=$1 and status='lobby'`, [sessionId]);
         // A card bound to a question that was skipped before scoring goes back to waiting...
@@ -613,15 +647,53 @@ export async function control(sessionId: string, action: string, itemId?: string
       const it = await itemById(g.current_item_id);
       if (!it?.points.wager) throw new HttpError(400, 'Only Map Heist items take wagers.');
       await q(`update powerups set status='used', item_id=$1, used_at=now() where session_id=$2 and type='highroller' and status='armed'`, [it.id, sessionId]);
-      await q(`update game_state set phase='wager' where session_id=$1`, [sessionId]);
+      // Timed wagers run the whole start on the clock: betting, then the get-ready countdown, then answering.
+      const w = clampSecs(opts.wagerSeconds, 0, 600, 0);
+      const lead = clampSecs(opts.lead, 0, 60, 10);
+      const secs = clampSecs(seconds, 5, 3600, it.time_limit_s);
+      if (w > 0) {
+        await q(`update game_state set phase='wager', wager_ends_at=now() + make_interval(secs => $1::float8),
+                   opened_at=now() + make_interval(secs => $1::float8 + $2::float8), closes_at=now() + make_interval(secs => $1::float8 + $2::float8 + $3::float8) where session_id=$4`,
+          [w, lead, secs, sessionId]);
+      } else {
+        await q(`update game_state set phase='wager', wager_ends_at=null, opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+      }
       break;
     }
     case 'open': {
       const it = await itemById(g.current_item_id);
       if (!it || it.answer_key.type === 'manual') throw new HttpError(400, 'Pick an auto-scored item first.');
-      const secs = Math.max(5, Math.min(3600, Math.round(Number(seconds) || it.time_limit_s)));
-      await q(`update game_state set phase='open', opened_at=now(), closes_at=now() + ($1 || ' seconds')::interval where session_id=$2`,
-        [String(secs), sessionId]);
+      const secs = clampSecs(seconds, 5, 3600, it.time_limit_s);
+      const lead = clampSecs(opts.lead, 0, 60, 0);
+      await q(`update game_state set phase='open', wager_ends_at=null, opened_at=now() + make_interval(secs => $1::float8),
+                 closes_at=now() + make_interval(secs => $1::float8 + $2::float8) where session_id=$3`, [lead, secs, sessionId]);
+      break;
+    }
+    case 'skip': {
+      // Jump to the next step now: end betting (the countdown starts) or end the countdown (answering starts).
+      const ans = g.opened_at && g.closes_at ? (+g.closes_at - +g.opened_at) / 1000 : null;
+      if (g.phase === 'wager' && g.wager_ends_at && g.opened_at && ans !== null) {
+        const lead = (+g.opened_at - +g.wager_ends_at) / 1000;
+        await q(`update game_state set wager_ends_at=now(), opened_at=now() + make_interval(secs => $1::float8),
+                   closes_at=now() + make_interval(secs => $1::float8 + $2::float8) where session_id=$3`, [lead, ans, sessionId]);
+      } else if (g.phase === 'ready' && ans !== null) {
+        await q(`update game_state set phase='open', wager_ends_at=null, opened_at=now(), closes_at=now() + make_interval(secs => $1::float8) where session_id=$2`,
+          [ans, sessionId]);
+      } else {
+        throw new HttpError(400, 'Nothing is counting down.');
+      }
+      break;
+    }
+    case 'more': {
+      // +15 s on whatever is counting down (betting or get-ready); answering time is unchanged.
+      if (g.phase === 'wager' && g.wager_ends_at) {
+        await q(`update game_state set wager_ends_at=wager_ends_at + interval '15 seconds', opened_at=opened_at + interval '15 seconds',
+                   closes_at=closes_at + interval '15 seconds' where session_id=$1`, [sessionId]);
+      } else if (g.phase === 'ready') {
+        await q(`update game_state set opened_at=opened_at + interval '15 seconds', closes_at=closes_at + interval '15 seconds' where session_id=$1`, [sessionId]);
+      } else {
+        throw new HttpError(400, 'Nothing is counting down.');
+      }
       break;
     }
     case 'extend': {
@@ -629,13 +701,13 @@ export async function control(sessionId: string, action: string, itemId?: string
       break;
     }
     case 'close':
-      await q(`update game_state set phase='closed', closes_at=least(coalesce(closes_at, now()), now()) where session_id=$1`, [sessionId]);
+      await q(`update game_state set phase='closed', wager_ends_at=null, closes_at=least(coalesce(closes_at, now()), now()) where session_id=$1`, [sessionId]);
       break;
     case 'reveal': {
       if (!g.current_item_id) throw new HttpError(400, 'Pick an item first.');
       const it = await itemById(g.current_item_id);
       if (it && it.answer_key.type !== 'manual') await rescore(sessionId, it.id, true);
-      await q(`update game_state set phase='revealed', closes_at=least(coalesce(closes_at, now()), now()) where session_id=$1`, [sessionId]);
+      await q(`update game_state set phase='revealed', wager_ends_at=null, closes_at=least(coalesce(closes_at, now()), now()) where session_id=$1`, [sessionId]);
       break;
     }
     case 'reset': {
@@ -644,7 +716,7 @@ export async function control(sessionId: string, action: string, itemId?: string
         await db(`delete from submissions where session_id=$1 and item_id=$2`, [sessionId, g.current_item_id]);
         await db(`delete from score_events where session_id=$1 and item_id=$2 and source in ('auto','powerup')`, [sessionId, g.current_item_id]);
         await db(`update powerups set status='available', item_id=null, used_at=null, requested_at=null, hint=null where session_id=$1 and item_id=$2 and type in ('lifeline','retry')`, [sessionId, g.current_item_id]);
-        await db(`update game_state set phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+        await db(`update game_state set phase='idle', opened_at=null, closes_at=null, wager_ends_at=null where session_id=$1`, [sessionId]);
       });
       break;
     }
@@ -654,7 +726,7 @@ export async function control(sessionId: string, action: string, itemId?: string
       break;
     }
     case 'clear':
-      await q(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+      await q(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null, wager_ends_at=null where session_id=$1`, [sessionId]);
       break;
     case 'reset-scores':
       // After a practice round: wipe every answer, point and played power-up card. Teams and members stay.
@@ -662,7 +734,7 @@ export async function control(sessionId: string, action: string, itemId?: string
         await db(`delete from submissions where session_id=$1`, [sessionId]);
         await db(`delete from score_events where session_id=$1`, [sessionId]);
         await db(`update powerups set status='available', item_id=null, requested_at=null, used_at=null, hint=null where session_id=$1`, [sessionId]);
-        await db(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
+        await db(`update game_state set current_item_id=null, phase='idle', opened_at=null, closes_at=null, wager_ends_at=null where session_id=$1`, [sessionId]);
         await db(`update sessions set practice=false, status=case when status='ended' then 'live' else status end where id=$1`, [sessionId]);
       });
       break;

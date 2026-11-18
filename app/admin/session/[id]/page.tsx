@@ -106,7 +106,11 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
   const cur = data.current;
   const phase = data.state.phase;
   const [secs, setSecs] = useState<number | ''>('');
+  const [lead, setLead] = useState<number | ''>(10);
+  const [wsecs, setWsecs] = useState<number | ''>(45);
   const left = useCountdown(phase === 'open' ? data.state.closesAt : null, data.state.serverNow);
+  const wagerLeft = useCountdown(phase === 'wager' ? data.state.wagerEndsAt : null, data.state.serverNow);
+  const startsIn = useCountdown(phase === 'ready' ? data.state.opensAt : null, data.state.serverNow);
   const ctl = (action: string, extra: object = {}) => call(`${base}/control`, { action, ...extra });
   const inGame = data.items.filter((i) => i.selected);
   const idx = cur ? inGame.findIndex((i) => i.id === cur.id) : -1;
@@ -122,6 +126,12 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
   const isManual = cur?.answer_key.type === 'manual';
   const isWager = !!cur?.points.wager;
   const pending = data.powerups.filter((p) => p.status === 'requested');
+  const noWager = isWager ? data.teams.filter((t) => !subByTeam.get(t.id)?.wager) : [];
+  // Moving past wagers early: make sure the teacher knows who has not bet yet.
+  const okToEndWagers = () => !noWager.length
+    || confirm(`${noWager.length === 1 ? '1 team hasn\u2019t' : `${noWager.length} teams haven\u2019t`} locked a wager (${noWager.map((t) => t.name).join(', ')}). They will play for 1 point. Continue?`);
+  const timing = { seconds: secs || undefined, lead: lead === '' ? 0 : lead };
+  const num = (v: string) => (v === '' ? '' : Math.max(0, Number(v)));
 
   return (
     <div className="grid gap-5 xl:grid-cols-[300px_1fr_320px]">
@@ -177,15 +187,64 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
                 </>
               ) : (
                 <>
-                  {phase === 'idle' && isWager && <Button size="lg" className="bg-gold text-ink hover:bg-gold/90" onClick={() => ctl('wager')}>💰 Start wagers</Button>}
-                  {(phase === 'idle' || phase === 'wager') && (
+                  {(phase === 'idle' || (phase === 'wager' && !data.state.wagerEndsAt)) && (
+                    <div className="flex w-full flex-col gap-3">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
+                        {phase === 'idle' && isWager && (
+                          <label className="flex items-center gap-2">
+                            💰 Wager time
+                            <Input type="number" min={0} value={wsecs} onChange={(e) => setWsecs(num(e.target.value))} className="w-20 py-2 text-center" /> s
+                          </label>
+                        )}
+                        <label className="flex items-center gap-2" title="Teams see the countdown and can still play a card. Answer time starts after it.">
+                          ⏳ Get-ready countdown
+                          <Input type="number" min={0} max={60} value={lead} onChange={(e) => setLead(num(e.target.value))} className="w-20 py-2 text-center" /> s
+                        </label>
+                        <label className="flex items-center gap-2">
+                          ⏱ Answer time
+                          <Input type="number" min={5} value={secs} placeholder={String(cur.time_limit_s)} onChange={(e) => setSecs(e.target.value ? Number(e.target.value) : '')} className="w-20 py-2 text-center" /> s
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {phase === 'idle' && isWager && (
+                          <Button size="lg" className="bg-gold text-ink hover:bg-gold/90" onClick={() => ctl('wager', { ...timing, wagerSeconds: wsecs || 0 })}>
+                            💰 Start wagers{wsecs ? ` (${wsecs} s, then auto-start)` : ''}
+                          </Button>
+                        )}
+                        <Button size="lg" variant={isWager && phase === 'idle' ? 'outline' : 'success'}
+                          onClick={() => (phase !== 'wager' || okToEndWagers()) && ctl('open', timing)}>
+                          ▶ {lead ? `Start in ${lead} s` : 'Open answering now'}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted">
+                        {isWager && phase === 'idle'
+                          ? 'Start wagers runs on its own: betting, then the get-ready countdown, then answering. Set wager time to 0 to end betting yourself.'
+                          : 'During the countdown the question stays hidden and teams can still play a card. Set it to 0 to open right away.'}
+                      </p>
+                    </div>
+                  )}
+                  {phase === 'wager' && data.state.wagerEndsAt && (
                     <>
-                      <Button size="lg" variant="success" onClick={() => ctl('open', { seconds: secs || undefined })}>▶ Open answering</Button>
-                      <label className="flex items-center gap-2 text-sm text-muted">
-                        <Input type="number" min={5} value={secs} placeholder={String(cur.time_limit_s)} onChange={(e) => setSecs(e.target.value ? Number(e.target.value) : '')} className="w-24 py-2 text-center" />
-                        seconds
-                      </label>
+                      <span className="rounded-xl bg-gold/15 px-3 py-2 text-sm font-bold text-gold">
+                        💰 Wagers lock in <span className="font-mono text-xl tabular-nums">{fmtTime(wagerLeft)}</span>
+                      </span>
+                      <Button variant="outline" onClick={() => okToEndWagers() && ctl('skip')}>⏭ Lock wagers now</Button>
+                      <Button variant="ghost" onClick={() => ctl('more')}>+15 s</Button>
                     </>
+                  )}
+                  {phase === 'ready' && (
+                    <>
+                      <span className="rounded-xl bg-win/15 px-3 py-2 text-sm font-bold text-win">
+                        ⏳ Question starts in <span className="font-mono text-xl tabular-nums">{startsIn ?? 0}</span>
+                      </span>
+                      <Button variant="success" onClick={() => ctl('skip')}>⏭ Start now</Button>
+                      <Button variant="ghost" onClick={() => ctl('more')}>+15 s</Button>
+                    </>
+                  )}
+                  {isWager && (phase === 'wager' || phase === 'idle') && (
+                    <span className={cx('text-sm', noWager.length ? 'text-muted' : 'text-win')}>
+                      {data.teams.length - noWager.length} of {data.teams.length} teams locked a wager
+                    </span>
                   )}
                   {phase === 'open' && (
                     <>

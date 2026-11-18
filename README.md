@@ -57,7 +57,7 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
    - **Question sets:** instead of ticking questions one by one, use **Load a question set**. There are 11 tournament sets (6 R1 + 4 R2 + 5 R3, plus all R4 and R5) and 2 practice sets (4 easy warm-ups each). Practice questions never appear in a tournament set. Sets are defined in `lib/sets.ts`.
    - **Practice first:** load a practice set (this ticks **Practice round**, so phones and the projector say scores will be reset). When the warm-up is done, press **↺ Reset scores**: every answer, point and adjustment is deleted and each team gets its power-up card back, while teams and players stay. Then load a tournament set in the **Questions** tab and save.
 2. **Open the projector board** from the control screen. Students scan the QR code or go to the site and type the code.
-3. **For each item** in the control screen: pick it on the left → (R3: **Start wagers**) → **Open answering** → **Reveal & score** → **Next**.
+3. **For each item** in the control screen: pick it on the left → (R3: **Start wagers**) or **Start in 10 s** → **Reveal & score** → **Next**. Answering opens by itself when the countdown ends.
 4. Use **✓ / ✗** beside any answer to accept a valid alternative or reject one; scores are recalculated instantly.
 5. **Encode R4 / R5:** tick CodeChum problems as teams pass them, tap ⭐ for the first solver, and tap the team that wins each bug.
 6. **Power-ups & points:** approve Double Down / Steal requests and add or remove points with a reason (for example a Steal). Every other card runs by itself.
@@ -89,7 +89,9 @@ Scoring cards take effect on the question on screen the moment they are played. 
 
 The projector shows a big announcement whenever a team plays a card, and a card icon next to each team that has one active. The Control tab shows the same in its **Card** column and the **Power-up activity** list.
 
-The question text and figure stay hidden on the projector and phones until you press **Open answering**, including during Map Heist wagers. The Control tab's **#** column ranks teams by when they submitted (with seconds since opening).
+The question text and figure stay hidden on the projector and phones until answering opens, including during Map Heist wagers and the get-ready countdown. The Control tab's **#** column ranks teams by when they submitted (with seconds since opening).
+
+**Timing.** **Start in N s** runs a get-ready countdown (default 10 s, 0 opens right away): the question stays hidden, phones show the countdown and the cards that work on this question, and answering opens by itself with the full answer time. On Map Heist items, **Start wagers** with a wager time (default 45 s) runs the whole start on its own: betting with a clock, then the countdown, then answering. While a clock runs you can **⏭ Lock wagers now** / **⏭ Start now** or add **+15 s**. The Control tab shows how many teams locked a wager and warns before you end betting early; teams that did not bet play for 1 point.
 
 The projector, phones and Control tab all show which cards can be played on the current question (**Playable now** / **WORKS NOW**) and which cards are already active on it.
 

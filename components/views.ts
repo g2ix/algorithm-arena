@@ -6,7 +6,7 @@ export type PublicItem = {
   answerText: string | null; explanation: string | null; answerFigure: string | null;
 };
 
-export type StateView = { phase: 'idle' | 'wager' | 'open' | 'closed' | 'revealed'; item: PublicItem | null; closesAt: string | null; serverNow: string; version: string; board: BoardMode };
+export type StateView = { phase: 'idle' | 'wager' | 'ready' | 'open' | 'closed' | 'revealed'; item: PublicItem | null; closesAt: string | null; opensAt: string | null; wagerEndsAt: string | null; nextAt: string | null; serverNow: string; version: string; board: BoardMode };
 
 export type BoardMode = 'auto' | 'question' | 'overall' | 'rounds' | 'hidden';
 

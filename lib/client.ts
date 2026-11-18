@@ -87,6 +87,18 @@ export function useLive<T>(url: string | null, sessionIdOrFn: string | null | un
     };
   }, [sessionId, reload]);
 
+  // Timed steps (wager → get ready → answering) change on the clock, not in the database,
+  // so no Realtime event fires: reload right when the server says the next step begins.
+  const st = (data as { state?: { nextAt?: string | null; serverNow?: string } } | null)?.state;
+  const nextAt = st?.nextAt ?? null;
+  const serverNow = st?.serverNow ?? null;
+  useEffect(() => {
+    if (!nextAt || !serverNow) return;
+    const ms = new Date(nextAt).getTime() - new Date(serverNow).getTime() + 300;
+    const t = setTimeout(() => void reload(), Math.max(150, ms));
+    return () => clearTimeout(t);
+  }, [nextAt, serverNow, reload]);
+
   useEffect(() => {
     const ms = live ? 8000 : 2000;
     const t = setInterval(() => {

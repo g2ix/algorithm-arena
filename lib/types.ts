@@ -24,7 +24,7 @@ export type Points = {
 
 export type RoundId = 'R1' | 'R2' | 'R3' | 'R4' | 'R5';
 
-export type Phase = 'idle' | 'wager' | 'open' | 'closed' | 'revealed';
+export type Phase = 'idle' | 'wager' | 'ready' | 'open' | 'closed' | 'revealed';
 
 export interface ItemRow {
   id: string;

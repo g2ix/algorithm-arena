@@ -1,6 +1,6 @@
 // Database schema. Runs automatically the first time the app talks to the
 // database (see lib/db.ts), and is also saved as supabase/migrations/001_init.sql.
-export const SCHEMA_VERSION = '6';
+export const SCHEMA_VERSION = '7';
 
 export const SCHEMA_SQL = `
 create table if not exists app_meta (
@@ -80,6 +80,8 @@ create table if not exists game_state (
 );
 -- What the projector's leaderboard shows: auto | question | overall | rounds | hidden
 alter table game_state add column if not exists board text not null default 'auto';
+-- Timed wagers: when betting closes (answering then opens by itself after the get-ready countdown).
+alter table game_state add column if not exists wager_ends_at timestamptz;
 
 create table if not exists submissions (
   id uuid primary key default gen_random_uuid(),

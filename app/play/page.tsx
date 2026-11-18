@@ -43,6 +43,8 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
   const { state, mine } = me;
   const item = state.item;
   const left = useCountdown(state.phase === 'open' ? state.closesAt : null, state.serverNow);
+  const wagerLeft = useCountdown(state.phase === 'wager' ? state.wagerEndsAt : null, state.serverNow);
+  const startsIn = useCountdown(state.phase === 'ready' ? state.opensAt : null, state.serverNow);
 
   if (me.session.status === 'ended') {
     return (
@@ -73,14 +75,15 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
         {state.phase === 'open' && left !== null && (
           <span className={cx('font-mono text-xl font-black tabular-nums', left <= 10 ? 'text-lose animate-pulse' : 'text-white')}>{fmtTime(left)}</span>
         )}
-        {state.phase === 'wager' && <Badge color="#fbbf24">Wager time</Badge>}
+        {state.phase === 'wager' && <Badge color="#fbbf24">{wagerLeft !== null ? `Wagers lock in ${fmtTime(wagerLeft)}` : 'Wager time'}</Badge>}
+        {state.phase === 'ready' && <Badge color="#22c55e">Starts in {startsIn ?? 0}</Badge>}
         {state.phase === 'closed' && <Badge>Time&apos;s up</Badge>}
         {state.phase === 'revealed' && <Badge color="#22d3ee">Answer revealed</Badge>}
       </div>
 
       {item.hidden ? (
         <div className="rounded-xl bg-white/5 p-4 text-center text-sm text-muted">
-          🔒 The question appears when your teacher opens answering.
+          🔒 {state.phase === 'ready' ? 'The question appears when the countdown ends.' : 'The question appears when your teacher opens answering.'}
           {state.phase === 'wager' && ' Bet on how sure you are of this round, not on the question itself.'}
         </div>
       ) : (
@@ -96,7 +99,20 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
       ) : state.phase === 'idle' ? (
         <p className="text-center text-muted">Get ready… the teacher will open this item in a moment.</p>
       ) : state.phase === 'wager' ? (
-        <Wager me={me} reload={reload} />
+        <>
+          <Wager me={me} reload={reload} />
+          <CardNudge me={me} />
+        </>
+      ) : state.phase === 'ready' ? (
+        <>
+          <div className="pop rounded-xl border border-win/40 bg-win/10 p-5 text-center">
+            <div className="text-sm font-bold uppercase tracking-wider text-win">Get ready</div>
+            <div className="font-mono text-7xl font-black tabular-nums">{startsIn ?? 0}</div>
+            <div className="text-sm text-muted">Answering starts by itself. Your answer time starts then, not now.</div>
+            {item.wager && <div className="mt-2 text-sm text-amber-200">{mine.wager ? `Your wager: ${mine.wager}` : 'No wager locked, so this counts as a 1-point wager.'}</div>}
+          </div>
+          <CardNudge me={me} />
+        </>
       ) : state.phase === 'open' ? (
         mine.answers ? <Submitted me={me} /> : <AnswerForm me={me} reload={reload} timeUp={left === 0} draft={draft} />
       ) : state.phase === 'closed' ? (
@@ -106,6 +122,23 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
       )}
       {lifeline?.hint && state.phase !== 'revealed' && <HintCard hint={lifeline.hint} />}
     </Card>
+  );
+}
+
+/** Before answering starts: remind the team it can still play a card that works on this question. */
+function CardNudge({ me }: { me: MeView }) {
+  const item = me.state.item;
+  if (me.powerups.some((p) => p.status !== 'available')) return null;
+  const mineNow = { submitted: !!me.mine.answers, wagerLocked: !!me.mine.wager };
+  const now = POWERUP_ORDER.filter((t) => playableNow(t, item, me.state.phase, mineNow));
+  if (!now.length) return null;
+  return (
+    <button onClick={() => document.getElementById('cards')?.scrollIntoView({ behavior: 'smooth' })}
+      className="rounded-xl border border-brand/40 bg-brand/10 p-3 text-left text-sm transition hover:border-brand">
+      <b>🃏 Play a card before it starts?</b>{' '}
+      <span className="text-muted">{now.map((t) => `${POWERUP_INFO[t].icon} ${POWERUP_INFO[t].name}`).join(' · ')} work on this one.</span>{' '}
+      <span className="font-bold text-brand">Pick below ↓</span>
+    </button>
   );
 }
 
@@ -277,7 +310,7 @@ ${info.when}`)) return;
     reload();
   };
   return (
-    <Card>
+    <Card id="cards">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-bold">Power-up cards</h3>
         <span className="text-xs text-muted">Pick one per game</span>
