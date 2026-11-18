@@ -49,13 +49,33 @@ async function storedVersion(run: (text: string) => Promise<{ value?: string; ok
 /** Up to date, or newer: code from an older deployment must never re-run its setup over a newer schema. */
 const upToDate = (v: string | null) => v !== null && Number(v) >= Number(SCHEMA_VERSION);
 
+/**
+ * Read the stored version within a few seconds. If something in the database holds a lock
+ * on app_meta, don't make players wait on it: report 'unknown' and serve the request anyway
+ * (the schema was already set up by an earlier start).
+ */
+async function quickVersion(sql: Sql): Promise<string | null | 'unknown'> {
+  try {
+    return await sql.begin(async (t) => {
+      await t.unsafe(`set local lock_timeout = '3s'`);
+      await t.unsafe(`set local statement_timeout = '5s'`);
+      return storedVersion((text) => t.unsafe(text));
+    });
+  } catch (e) {
+    console.error('[db] schema version check skipped:', (e as Error).message);
+    return 'unknown';
+  }
+}
+
 async function init(sql: Sql) {
-  // Usual case: a plain read with no locks, so new server instances starting during a
-  // live game never queue behind each other or block the game's own queries.
-  if (upToDate(await storedVersion((text) => sql.unsafe(text)))) return;
+  // Usual case: a quick read with no locks taken, so new server instances starting during
+  // a live game never queue behind each other or block the game's own queries.
+  const v = await quickVersion(sql);
+  if (v === 'unknown' || upToDate(v)) return;
   await sql.begin(async (t) => {
     // Setting up locks the game tables briefly. Give up quickly rather than make every
     // request wait behind it; the next request tries again.
+    await t.unsafe(`set local idle_in_transaction_session_timeout = '20s'`);
     await t.unsafe(`set local lock_timeout = '5s'`);
     await t.unsafe(`set local statement_timeout = '60s'`);
     await t.unsafe('select pg_advisory_xact_lock(424242)');
@@ -115,5 +135,10 @@ export const q: Query = async (text, params = []) => {
 /** Run several queries in one transaction. */
 export async function tx<T>(fn: (q: Query) => Promise<T>): Promise<T> {
   const sql = await ready();
-  return (await sql.begin(async (t) => fn(async (text, params = []) => (await t.unsafe(text, params as any[])) as any))) as T;
+  return (await sql.begin(async (t) => {
+    // If this server instance is frozen mid-transaction, the database ends the transaction
+    // (and frees its locks) after 20 s instead of keeping it open forever.
+    await t.unsafe(`set local idle_in_transaction_session_timeout = '20s'`);
+    return fn(async (text, params = []) => (await t.unsafe(text, params as any[])) as any);
+  })) as T;
 }
