@@ -28,6 +28,10 @@ function client(): Sql {
     globalThis.__arenaSql = postgres(url.toString(), {
       ssl: local ? false : 'require',
       prepare: false, // required for Supabase's transaction pooler
+      // One query at a time per connection. Pipelining several queries on one connection
+      // left pooler connections stuck mid-query for minutes (pg_stat_activity: "active",
+      // waiting on ClientRead), starving every other request until a statement timeout.
+      max_pipeline: 1,
       max: 5,
       idle_timeout: 20,
       connect_timeout: 15,
