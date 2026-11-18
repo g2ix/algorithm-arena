@@ -38,19 +38,28 @@ function client(): Sql {
   return globalThis.__arenaSql;
 }
 
+/** The schema version stored in the database, or null on a fresh database. */
+async function storedVersion(run: (text: string) => Promise<{ value?: string; ok?: string | null }[]>): Promise<string | null> {
+  const [{ ok }] = await run(`select to_regclass('public.app_meta')::text as ok`);
+  if (!ok) return null;
+  const rows = await run(`select value from app_meta where key = 'schema_version'`);
+  return rows[0]?.value ?? null;
+}
+
+/** Up to date, or newer: code from an older deployment must never re-run its setup over a newer schema. */
+const upToDate = (v: string | null) => v !== null && Number(v) >= Number(SCHEMA_VERSION);
+
 async function init(sql: Sql) {
+  // Usual case: a plain read with no locks, so new server instances starting during a
+  // live game never queue behind each other or block the game's own queries.
+  if (upToDate(await storedVersion((text) => sql.unsafe(text)))) return;
   await sql.begin(async (t) => {
-    // Fail fast instead of hanging if another instance is stuck holding the setup lock.
-    await t.unsafe(`set local lock_timeout = '15s'`);
+    // Setting up locks the game tables briefly. Give up quickly rather than make every
+    // request wait behind it; the next request tries again.
+    await t.unsafe(`set local lock_timeout = '5s'`);
     await t.unsafe(`set local statement_timeout = '60s'`);
     await t.unsafe('select pg_advisory_xact_lock(424242)');
-    const [{ ok }] = await t.unsafe<{ ok: string | null }[]>(`select to_regclass('public.app_meta')::text as ok`);
-    let version: string | null = null;
-    if (ok) {
-      const rows = await t.unsafe<{ value: string }[]>(`select value from app_meta where key = 'schema_version'`);
-      version = rows[0]?.value ?? null;
-    }
-    if (version === SCHEMA_VERSION) return;
+    if (upToDate(await storedVersion((text) => t.unsafe(text)))) return; // another instance just did it
     await t.unsafe(SCHEMA_SQL);
     // One statement per table (not one per row): the database may be far away, and
     // every round trip adds latency while all other requests wait for this lock.
