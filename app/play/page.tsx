@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { TeamHeader } from '@/components/TeamHeader';
 import { Badge, Button, Card, cx, ErrorNote, Input, Logo, ROUND_META, signed, Spinner } from '@/components/ui';
-import { POWERUP_INFO, POWERUP_ORDER } from '@/components/powerups';
+import { playableNow, POWERUP_INFO, POWERUP_ORDER } from '@/components/powerups';
 import type { LifelineHint, MeView } from '@/components/views';
 
 export default function PlayPage() {
@@ -78,8 +78,15 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
         {state.phase === 'revealed' && <Badge color="#22d3ee">Answer revealed</Badge>}
       </div>
 
-      <p className="text-lg font-semibold leading-snug">{item.prompt}</p>
-      {item.figure && state.phase !== 'idle' && (
+      {item.hidden ? (
+        <div className="rounded-xl bg-white/5 p-4 text-center text-sm text-muted">
+          🔒 The question appears when your teacher opens answering.
+          {state.phase === 'wager' && ' Bet on how sure you are of this round, not on the question itself.'}
+        </div>
+      ) : (
+        <p className="text-lg font-semibold leading-snug">{item.prompt}</p>
+      )}
+      {item.figure && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={item.figure} alt="Figure" className="w-full rounded-xl bg-white p-2" />
       )}
@@ -87,7 +94,7 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
       {item.manual ? (
         <ManualNote round={item.round} revealed={state.phase === 'revealed'} answer={item.answerText} />
       ) : state.phase === 'idle' ? (
-        <p className="text-muted">Get ready… the teacher will open this item in a moment.</p>
+        <p className="text-center text-muted">Get ready… the teacher will open this item in a moment.</p>
       ) : state.phase === 'wager' ? (
         <Wager me={me} reload={reload} />
       ) : state.phase === 'open' ? (
@@ -241,8 +248,12 @@ function HintCard({ hint }: { hint: LifelineHint }) {
 
 function Powerups({ me, reload, draft: draftRef }: { me: MeView; reload: () => void; draft: RefObject<string[]> }) {
   const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const usedOne = me.powerups.some((p) => p.status !== 'available');
+  const item = me.state.item;
+  const mineNow = { submitted: !!me.mine.answers, wagerLocked: !!me.mine.wager };
+  const activeHere = me.powerups.find((p) => item && p.status === 'used' && p.item_id === item.id && p.type !== 'lifeline' && p.type !== 'retry');
   const play = async (t: string) => {
     const info = POWERUP_INFO[t];
     const draft = draftRef.current;
@@ -253,8 +264,14 @@ function Powerups({ me, reload, draft: draftRef }: { me: MeView; reload: () => v
     if (!confirm(`Play ${info.name}? Your team only gets one power-up per game.
 
 ${info.when}`)) return;
-    setErr(''); setBusy(true);
-    try { await api('/api/powerup', { json: { type: t, answers: t === 'lifeline' ? draft : undefined } }); }
+    setErr(''); setNote(''); setBusy(true);
+    try {
+      const r = await api<{ item?: string }>('/api/powerup', { json: { type: t, answers: t === 'lifeline' ? draft : undefined } });
+      setNote(t === 'double' || t === 'steal' ? `${info.name} sent to your teacher for approval.`
+        : t === 'lifeline' ? 'Lifeline used: read your hint above.'
+        : t === 'retry' ? 'Answer erased: submit again before time runs out.'
+        : r.item ? `${info.name} is active on ${r.item}!` : `${info.name} is ready: it activates on the next question your teacher shows.`);
+    }
     catch (e) { setErr((e as Error).message); }
     setBusy(false);
     reload();
@@ -265,11 +282,20 @@ ${info.when}`)) return;
         <h3 className="font-bold">Power-up cards</h3>
         <span className="text-xs text-muted">Pick one per game</span>
       </div>
+      {activeHere && (
+        <p className="mb-3 rounded-lg px-3 py-2 text-sm font-bold" style={{ background: `${POWERUP_INFO[activeHere.type].color}22`, color: POWERUP_INFO[activeHere.type].color }}>
+          {POWERUP_INFO[activeHere.type].icon} {POWERUP_INFO[activeHere.type].name} is active on this question
+        </p>
+      )}
+      {!usedOne && item && !item.manual && (
+        <p className="mb-3 text-xs text-muted">Cards marked <b className="text-win">WORKS NOW</b> apply to this question. Others wait for a question they fit.</p>
+      )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {POWERUP_ORDER.map((t) => {
           const p = me.powerups.find((x) => x.type === t);
           const info = POWERUP_INFO[t];
           const status = p?.status ?? 'available';
+          const now = !usedOne && playableNow(t, item, me.state.phase, mineNow);
           return (
             <button key={t} disabled={usedOne || busy} onClick={() => play(t)}
               style={status !== 'available' ? { borderColor: info.color, boxShadow: `0 0 18px ${info.color}55` } : undefined}
@@ -279,15 +305,20 @@ ${info.when}`)) return;
                 status === 'armed' && 'bg-brand/15',
                 status === 'used' && 'bg-white/5',
                 status === 'available' && usedOne && 'border-line opacity-30')}>
+              {now && <span className="rounded-full bg-win/20 px-2 text-[10px] font-black tracking-wider text-win">WORKS NOW</span>}
               <span className="text-2xl font-black" style={{ color: info.color }}>{info.icon}</span>
               <span className="text-sm font-bold">{info.name}</span>
               <span className="text-[11px] leading-tight text-muted">
-                {status === 'requested' ? 'Waiting for teacher…' : status === 'armed' ? 'Active on next item' : status === 'used' ? 'Played!' : info.text}
+                {status === 'requested' ? 'Waiting for teacher…'
+                  : status === 'armed' ? 'Activates on the next question'
+                  : status === 'used' ? (p?.item && t !== 'lifeline' && t !== 'retry' ? `Active on ${p.item}` : 'Played!')
+                  : info.text}
               </span>
             </button>
           );
         })}
       </div>
+      {note && <p className="mt-3 rounded-lg bg-win/15 px-3 py-2 text-sm text-win">{note}</p>}
       <ErrorNote>{err}</ErrorNote>
     </Card>
   );

@@ -22,6 +22,23 @@ export const POWERUPS = ['lifeline', 'double', 'steal', 'shield', 'fast', 'highr
 export type PowerupType = (typeof POWERUPS)[number];
 /** Cards the teacher must approve. Every other card is applied by the system instantly. */
 const NEEDS_APPROVAL: PowerupType[] = ['double', 'steal'];
+/** Cards that change the scoring of one question. */
+const SCORING_CARDS = `('double','shield','fast','highroller')`;
+
+/** Can this scoring card take effect on the question on screen right now? */
+function fitsItem(type: string, it: ItemRow | null, phase: Phase | undefined) {
+  if (!it || it.answer_key.type === 'manual' || !phase || phase === 'revealed') return false;
+  const wager = !!it.points.wager;
+  if (type === 'highroller') return wager && (phase === 'idle' || phase === 'wager');
+  if (type === 'shield') return true;
+  if (type === 'double' || type === 'fast') return !wager;
+  return false;
+}
+
+/** Card types that apply to this question, for binding cards that are waiting. */
+function cardTypesFor(it: ItemRow) {
+  return it.points.wager ? 'shield,highroller' : 'double,fast,shield';
+}
 
 function clean(s: unknown, max = 40) {
   return String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -54,8 +71,8 @@ async function sessionById(id: string): Promise<SessionRow> {
 }
 
 async function state(sessionId: string) {
-  const [g] = await q<{ current_item_id: string | null; phase: Phase; opened_at: Date | null; closes_at: Date | null; version: bigint }>(
-    `select current_item_id, phase, opened_at, closes_at, version from game_state where session_id = $1`, [sessionId]);
+  const [g] = await q<{ current_item_id: string | null; phase: Phase; opened_at: Date | null; closes_at: Date | null; version: bigint; board: BoardMode }>(
+    `select current_item_id, phase, opened_at, closes_at, version, board from game_state where session_id = $1`, [sessionId]);
   return g;
 }
 
@@ -65,19 +82,36 @@ async function itemById(id: string | null): Promise<ItemRow | null> {
   return it ?? null;
 }
 
+export const BOARD_MODES = ['auto', 'question', 'overall', 'rounds', 'hidden'] as const;
+export type BoardMode = (typeof BOARD_MODES)[number];
+
+/** While the teacher hides the rankings, nobody (projector or phones) receives them. */
+function hideScores(teams: TeamScore[]): TeamScore[] {
+  return [...teams].sort((a, b) => a.name.localeCompare(b.name)).map((t) => ({
+    ...t, total: 0, rank: 0, byRound: Object.fromEntries(Object.keys(t.byRound).map((k) => [k, 0])),
+  }));
+}
+
 const ROUND_TITLES: Record<string, string> = { R1: 'Trace Race', R2: 'Human Tree', R3: 'Map Heist', R4: 'Code Sprint', R5: 'Bug Hunt' };
 
-/** What students and the projector may see about an item. The key appears only once revealed. */
-function publicItem(it: ItemRow | null, revealed: boolean) {
+/**
+ * What students and the projector may see about an item. The question stays hidden
+ * while the item is only selected or during wagers (teams bet before seeing it),
+ * and the key appears only once revealed.
+ */
+function publicItem(it: ItemRow | null, phase: Phase) {
   if (!it) return null;
+  const revealed = phase === 'revealed';
+  const hidden = it.answer_key.type !== 'manual' && (phase === 'idle' || phase === 'wager');
   return {
     id: it.id,
     round: it.round_id,
     roundTitle: ROUND_TITLES[it.round_id],
     label: it.label,
-    prompt: it.prompt,
-    figure: it.figure_url,
-    fields: answerFields(it.answer_key),
+    hidden,
+    prompt: hidden ? null : it.prompt,
+    figure: hidden ? null : it.figure_url,
+    fields: hidden ? [] : answerFields(it.answer_key),
     manual: it.answer_key.type === 'manual',
     wager: !!it.points.wager,
     timeLimit: it.time_limit_s,
@@ -93,14 +127,16 @@ export interface TeamScore {
 }
 
 async function teamScores(sessionId: string): Promise<TeamScore[]> {
-  const teams = await q<{ id: string; name: string; color: string }>(
-    `select id, name, color from teams where session_id = $1 order by created_at`, [sessionId]);
-  const sums = await q<{ team_id: string; round: string | null; pts: number }>(
-    `select e.team_id, i.round_id as round, sum(e.points)::int as pts
-       from score_events e left join items i on i.id = e.item_id
-      where e.session_id = $1 and ${COUNTED} group by e.team_id, i.round_id`, [sessionId]);
-  const mem = await q<{ team_id: string; display_name: string }>(
-    `select team_id, display_name from members where session_id = $1 order by joined_at`, [sessionId]);
+  const [teams, sums, mem] = await Promise.all([
+    q<{ id: string; name: string; color: string }>(
+      `select id, name, color from teams where session_id = $1 order by created_at`, [sessionId]),
+    q<{ team_id: string; round: string | null; pts: number }>(
+      `select e.team_id, i.round_id as round, sum(e.points)::int as pts
+         from score_events e left join items i on i.id = e.item_id
+        where e.session_id = $1 and ${COUNTED} group by e.team_id, i.round_id`, [sessionId]),
+    q<{ team_id: string; display_name: string }>(
+      `select team_id, display_name from members where session_id = $1 order by joined_at`, [sessionId]),
+  ]);
   const out: TeamScore[] = teams.map((t) => {
     const byRound: Record<string, number> = Object.fromEntries(ROUND_KEYS.map((k) => [k, 0]));
     for (const s of sums.filter((x) => x.team_id === t.id)) byRound[s.round ?? 'Other'] += s.pts;
@@ -118,10 +154,11 @@ async function teamScores(sessionId: string): Promise<TeamScore[]> {
 function stateView(g: Awaited<ReturnType<typeof state>>, it: ItemRow | null) {
   return {
     phase: g?.phase ?? 'idle',
-    item: publicItem(it, g?.phase === 'revealed'),
+    item: publicItem(it, g?.phase ?? 'idle'),
     closesAt: g?.closes_at ? new Date(g.closes_at).toISOString() : null,
     serverNow: new Date().toISOString(),
     version: String(g?.version ?? 0),
+    board: g?.board ?? 'auto',
   };
 }
 
@@ -141,30 +178,54 @@ export async function lobbyInfo(code: string) {
 export async function boardView(code: string) {
   const s = await sessionByCode(code);
   const g = await state(s.id);
-  const it = await itemById(g?.current_item_id ?? null);
-  const answered = it
-    ? (await q<{ team_id: string }>(
-        `select team_id from submissions where session_id = $1 and item_id = $2 and (answer_raw is not null or wager is not null)`,
-        [s.id, it.id])).map((r) => r.team_id)
-    : [];
-  const recent = await q<{ team: string; color: string; points: number; reason: string; created_at: Date }>(
-    `select t.name as team, t.color, e.points, e.reason, e.created_at from score_events e join teams t on t.id = e.team_id
-      where e.session_id = $1 and ${COUNTED} order by e.created_at desc limit 8`, [s.id]);
-  const firstCorrect = it && g?.phase === 'revealed'
-    ? (await q<{ team_id: string }>(`select team_id from submissions where session_id=$1 and item_id=$2 and rank=1`, [s.id, it.id]))[0]?.team_id ?? null
-    : null;
-  const plays = await q<{ team: string; color: string; type: string; at: Date }>(
-    `select t.name as team, t.color, p.type, p.requested_at as at from powerups p join teams t on t.id = p.team_id
-      where p.session_id = $1 and p.status <> 'available' and p.requested_at is not null order by p.requested_at desc limit 3`, [s.id]);
+  // Independent reads run side by side: each one is a round trip to the database.
+  const [it, teams, recent, plays, cards] = await Promise.all([
+    itemById(g?.current_item_id ?? null),
+    teamScores(s.id),
+    q<{ team: string; color: string; points: number; reason: string; created_at: Date }>(
+      `select t.name as team, t.color, e.points, e.reason, e.created_at from score_events e join teams t on t.id = e.team_id
+        where e.session_id = $1 and ${COUNTED} order by e.created_at desc limit 8`, [s.id]),
+    recentPlays(s.id),
+    q<{ team_id: string; type: string; status: string; item_id: string | null }>(
+      `select team_id, type, status, item_id from powerups where session_id = $1 and status <> 'available'`, [s.id]),
+  ]);
+  const hidden = g?.board === 'hidden';
+  const [answered, firstCorrect, itemPoints] = await Promise.all([
+    it
+      ? q<{ team_id: string }>(
+          `select team_id from submissions where session_id = $1 and item_id = $2 and (answer_raw is not null or wager is not null)`,
+          [s.id, it.id]).then((r) => r.map((x) => x.team_id))
+      : Promise.resolve([] as string[]),
+    it && g?.phase === 'revealed'
+      ? q<{ team_id: string }>(`select team_id from submissions where session_id=$1 and item_id=$2 and rank=1`, [s.id, it.id]).then((r) => r[0]?.team_id ?? null)
+      : Promise.resolve(null),
+    // Points each team earned on the question on screen, for the "this question" leaderboard.
+    it && g?.phase === 'revealed' && !hidden
+      ? q<{ team_id: string; points: number }>(
+          `select team_id, sum(points)::int as points from score_events where session_id=$1 and item_id=$2 group by team_id`, [s.id, it.id])
+      : Promise.resolve([] as { team_id: string; points: number }[]),
+  ]);
   return {
     session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status, practice: s.practice },
     state: stateView(g, it),
     plays,
-    teams: await teamScores(s.id),
+    cards,
+    teams: hidden ? hideScores(teams) : teams,
+    itemPoints,
     answered,
     firstCorrect,
-    recent,
+    recent: hidden ? [] : recent,
   };
+}
+
+/** Latest power-up plays, newest first, for the projector announcement and the teacher's feed. */
+function recentPlays(sessionId: string) {
+  return q<{ id: string; team: string; color: string; type: string; status: string; at: Date; item: string | null }>(
+    `select p.id, t.name as team, t.color, p.type, p.status, p.requested_at as at,
+            case when i.id is null then null else i.round_id || ' ' || i.label end as item
+       from powerups p join teams t on t.id = p.team_id left join items i on i.id = p.item_id
+      where p.session_id = $1 and p.status <> 'available' and p.requested_at is not null
+      order by p.requested_at desc limit 10`, [sessionId]);
 }
 
 // ---------------------------------------------------------------- students
@@ -215,33 +276,39 @@ async function memberByToken(token: string | null) {
 
 export async function memberView(token: string | null) {
   const m = await memberByToken(token);
-  const s = await sessionById(m.session_id);
-  const g = await state(s.id);
-  const it = await itemById(g?.current_item_id ?? null);
-  const scores = await teamScores(s.id);
-  const team = scores.find((t) => t.id === m.team_id)!;
-  const [mine] = it
-    ? await q<{ answer_raw: string[] | null; wager: number | null; is_correct: boolean | null; rank: number | null; member: string | null }>(
-        `select s.answer_raw, s.wager, s.is_correct, s.rank, m.display_name as member from submissions s
-           left join members m on m.id = s.member_id where s.session_id = $1 and s.item_id = $2 and s.team_id = $3`,
-        [s.id, it.id, m.team_id])
-    : [];
+  const [s, g] = await Promise.all([sessionById(m.session_id), state(m.session_id)]);
+  const itemId = g?.current_item_id ?? null;
   const revealed = g?.phase === 'revealed';
-  const itemPoints = it && revealed
-    ? (await q<{ pts: number }>(`select coalesce(sum(points),0)::int as pts from score_events where session_id=$1 and item_id=$2 and team_id=$3`,
-        [s.id, it.id, m.team_id]))[0].pts
-    : null;
-  const powerups = await q<{ type: string; status: string; item_id: string | null; hint: unknown }>(
-    `select type, status, item_id, hint from powerups where session_id = $1 and team_id = $2`, [s.id, m.team_id]);
-  const feed = await q<{ points: number; reason: string; created_at: Date }>(
-    `select e.points, e.reason, e.created_at from score_events e where e.session_id = $1 and e.team_id = $2 and ${COUNTED} order by e.created_at desc limit 40`,
-    [s.id, m.team_id]);
+  const [it, scores, mineRows, itemPoints, powerups, feed] = await Promise.all([
+    itemById(itemId),
+    teamScores(s.id),
+    itemId
+      ? q<{ answer_raw: string[] | null; wager: number | null; is_correct: boolean | null; rank: number | null; member: string | null }>(
+          `select s.answer_raw, s.wager, s.is_correct, s.rank, m.display_name as member from submissions s
+             left join members m on m.id = s.member_id where s.session_id = $1 and s.item_id = $2 and s.team_id = $3`,
+          [s.id, itemId, m.team_id])
+      : Promise.resolve([]),
+    itemId && revealed
+      ? q<{ pts: number }>(`select coalesce(sum(points),0)::int as pts from score_events where session_id=$1 and item_id=$2 and team_id=$3`,
+          [s.id, itemId, m.team_id]).then((r) => r[0].pts)
+      : Promise.resolve(null),
+    q<{ type: string; status: string; item_id: string | null; hint: unknown; item: string | null }>(
+      `select p.type, p.status, p.item_id, p.hint, case when i.id is null then null else i.round_id || ' ' || i.label end as item
+         from powerups p left join items i on i.id = p.item_id where p.session_id = $1 and p.team_id = $2`, [s.id, m.team_id]),
+    q<{ points: number; reason: string; created_at: Date }>(
+      `select e.points, e.reason, e.created_at from score_events e where e.session_id = $1 and e.team_id = $2 and ${COUNTED} order by e.created_at desc limit 40`,
+      [s.id, m.team_id]),
+  ]);
+  const own = scores.find((t) => t.id === m.team_id)!;
+  const team = g?.board === 'hidden' ? { ...own, rank: 0 } : own;
+  const mine = mineRows[0];
   return {
     me: { name: m.display_name },
     session: { id: s.id, code: s.code, title: s.title, className: s.class_name, status: s.status, practice: s.practice },
     team,
     teamsCount: scores.length,
-    leader: scores[0] ? { name: scores[0].name, total: scores[0].total } : null,
+    leader: scores[0] && g?.board !== 'hidden' ? { name: scores[0].name, total: scores[0].total } : null,
+    ranksHidden: g?.board === 'hidden',
     state: stateView(g, it),
     mine: mine
       ? { answers: mine.answer_raw, wager: mine.wager, by: mine.member, correct: revealed ? mine.is_correct : null, rank: revealed ? mine.rank : null, points: itemPoints }
@@ -334,10 +401,16 @@ export async function requestPowerup(token: string | null, type: unknown, answer
                                  where session_id=$1 and item_id=$2 and team_id=$3 and answer_raw is not null returning id`, [m.session_id, it!.id, m.team_id]);
       if (!cleared.length) throw new HttpError(400, 'Second Chance erases a submitted answer. Submit first, then use it if you change your mind.');
       await set('used', `, used_at=now(), item_id=$4`, [it!.id]);
-    } else if (t === 'highroller' && it?.points.wager && g.phase === 'wager') {
-      await set('used', `, used_at=now(), item_id=$4`, [it.id]);  // applies to the wager happening right now
+    } else if (fitsItem(t, it, g?.phase)) {
+      // Shield, Fast Pass, High Roller: take effect on the question on screen right away.
+      if (t === 'highroller') {
+        const [w] = await db(`select 1 from submissions where session_id=$1 and item_id=$2 and team_id=$3 and wager is not null`, [m.session_id, it!.id, m.team_id]);
+        if (w) throw new HttpError(400, 'Your team already locked its wager on this one. Play High Roller before locking a wager.');
+      }
+      await set('used', `, used_at=now(), item_id=$4`, [it!.id]);
+      result = { ok: true, item: `${it!.round_id} ${it!.label}` };
     } else {
-      await set('armed');  // shield, fast, highroller: waits for the next eligible item
+      await set('armed');  // no question it can apply to yet: binds to the next one the teacher selects
     }
     await bump(db, m.session_id);
     return result;
@@ -490,12 +563,13 @@ export async function adminSessionView(id: string) {
                 where s.session_id=$1 and s.item_id=$2 order by s.submitted_at nulls last`, [id, it.id])
     : [];
   const powerups = await q(`select p.*, t.name as team from powerups p join teams t on t.id = p.team_id where p.session_id=$1 order by t.created_at, p.type`, [id]);
+  const plays = await recentPlays(id);
   const manual = await q(`select e.id, e.team_id, e.item_id, e.tag, e.points, e.reason, e.created_at from score_events e
                             where e.session_id=$1 and e.source='manual' order by e.created_at desc`, [id]);
   const done = await q<{ item_id: string }>(`select distinct item_id from score_events where session_id=$1 and source='auto'`, [id]);
   return {
     session: s,
-    state: { ...stateView(g, it), currentItemId: it?.id ?? null },
+    state: { ...stateView(g, it), currentItemId: it?.id ?? null, openedAt: g?.opened_at ? new Date(g.opened_at).toISOString() : null },
     current: it ? { ...it } : null,
     items: items.filter((i) => i.active || i.selected).map((i) => ({ id: i.id, round: i.round_id, label: i.label, prompt: i.prompt, manual: i.answer_key.type === 'manual', points: i.points, timeLimit: i.time_limit_s, answerText: i.answer_text, selected: i.selected })),
     scoredItemIds: done.map((d) => d.item_id),
@@ -503,11 +577,12 @@ export async function adminSessionView(id: string) {
     members,
     submissions: subs,
     powerups,
+    plays,
     manualEvents: manual,
   };
 }
 
-export async function control(sessionId: string, action: string, itemId?: string, seconds?: number) {
+export async function control(sessionId: string, action: string, itemId?: string, seconds?: number, board?: string) {
   const g = await state(sessionId);
   if (!g) throw new HttpError(404, 'Session not found.');
   switch (action) {
@@ -516,9 +591,22 @@ export async function control(sessionId: string, action: string, itemId?: string
       if (!it) throw new HttpError(400, 'Pick an item.');
       const inGame = await q(`select 1 from session_items where session_id=$1 and item_id=$2`, [sessionId, it.id]);
       if (!inGame.length) throw new HttpError(400, 'That question is not part of this game. Add it in the Questions tab first.');
-      await q(`update game_state set current_item_id=$1, phase=$2, opened_at=null, closes_at=null where session_id=$3`,
-        [it.id, (await alreadyRevealed(sessionId, it.id)) ? 'revealed' : 'idle', sessionId]);
-      await q(`update sessions set status='live' where id=$1 and status='lobby'`, [sessionId]);
+      const revealed = await alreadyRevealed(sessionId, it.id);
+      await tx(async (db) => {
+        await db(`update game_state set current_item_id=$1, phase=$2, opened_at=null, closes_at=null where session_id=$3`,
+          [it.id, revealed ? 'revealed' : 'idle', sessionId]);
+        await db(`update sessions set status='live' where id=$1 and status='lobby'`, [sessionId]);
+        // A card bound to a question that was skipped before scoring goes back to waiting...
+        await db(`update powerups p set status='armed', item_id=null, used_at=null
+                   where p.session_id=$1 and p.type in ${SCORING_CARDS} and p.status='used' and p.item_id is not null and p.item_id <> $2
+                     and not exists (select 1 from score_events e where e.session_id=p.session_id and e.item_id=p.item_id and e.source='auto')`,
+          [sessionId, it.id]);
+        // ...and every waiting card that fits this question takes effect on it now.
+        if (!revealed && it.answer_key.type !== 'manual') {
+          await db(`update powerups set status='used', item_id=$1, used_at=now()
+                     where session_id=$2 and status='armed' and type = any(string_to_array($3, ','))`, [it.id, sessionId, cardTypesFor(it)]);
+        }
+      });
       break;
     }
     case 'wager': {
@@ -555,10 +643,14 @@ export async function control(sessionId: string, action: string, itemId?: string
       await tx(async (db) => {
         await db(`delete from submissions where session_id=$1 and item_id=$2`, [sessionId, g.current_item_id]);
         await db(`delete from score_events where session_id=$1 and item_id=$2 and source in ('auto','powerup')`, [sessionId, g.current_item_id]);
-        await db(`update powerups set status='armed', item_id=null, used_at=null where session_id=$1 and item_id=$2 and type in ('double','shield','fast','highroller')`, [sessionId, g.current_item_id]);
         await db(`update powerups set status='available', item_id=null, used_at=null, requested_at=null, hint=null where session_id=$1 and item_id=$2 and type in ('lifeline','retry')`, [sessionId, g.current_item_id]);
         await db(`update game_state set phase='idle', opened_at=null, closes_at=null where session_id=$1`, [sessionId]);
       });
+      break;
+    }
+    case 'board': {
+      if (!BOARD_MODES.includes(board as BoardMode)) throw new HttpError(400, 'Unknown leaderboard view.');
+      await q(`update game_state set board=$1 where session_id=$2`, [board, sessionId]);
       break;
     }
     case 'clear':
@@ -673,7 +765,12 @@ export async function decidePowerup(sessionId: string, powerupId: string, approv
   const [p] = await q<{ type: string; status: string }>(`select type, status from powerups where id=$1 and session_id=$2`, [powerupId, sessionId]);
   if (!p) throw new HttpError(404, 'Power-up not found.');
   if (!approve) await q(`update powerups set status='available', requested_at=null where id=$1`, [powerupId]);
-  else if (p.type === 'double') await q(`update powerups set status='armed' where id=$1`, [powerupId]);
+  else if (p.type === 'double') {
+    const g = await state(sessionId);
+    const it = await itemById(g?.current_item_id ?? null);
+    if (fitsItem('double', it, g?.phase)) await q(`update powerups set status='used', used_at=now(), item_id=$2 where id=$1`, [powerupId, it!.id]);
+    else await q(`update powerups set status='armed' where id=$1`, [powerupId]);
+  }
   else await q(`update powerups set status='used', used_at=now() where id=$1`, [powerupId]);
   await bump(q, sessionId);
 }

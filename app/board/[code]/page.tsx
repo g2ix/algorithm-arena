@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtTime, useCountdown, useLive } from '@/lib/client';
 import { confetti, sound } from '@/components/fx';
 import { Badge, cx, Dot, Logo, ROUND_META, signed, Spinner } from '@/components/ui';
-import { POWERUP_INFO } from '@/components/powerups';
-import type { BoardView } from '@/components/views';
+import { playableNow, POWERUP_INFO, POWERUP_ORDER } from '@/components/powerups';
+import type { BoardView, PowerupPlay, TeamScore } from '@/components/views';
 
 const ROW = 76;
 
@@ -87,6 +87,16 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
     lastTick.current = left;
   }, [left, muted]);
 
+  if (data.session.status === 'ended' && data.state.board === 'hidden') {
+    return (
+      <section className="flex flex-col items-center justify-center gap-6 rounded-3xl border border-line bg-panel/70 p-8 text-center">
+        <div className="text-7xl">🥁</div>
+        <h2 className="text-5xl font-black">And the champion is…</h2>
+        <p className="text-2xl text-muted">The final ranking will be revealed in a moment.</p>
+      </section>
+    );
+  }
+
   if (data.session.status === 'ended') {
     const top = data.teams.slice(0, 3);
     return (
@@ -141,9 +151,17 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
         {state.phase === 'idle' && <Badge className="px-4 py-2 text-xl">Up next</Badge>}
       </div>
 
-      <p className="text-3xl font-bold leading-snug">{item.prompt}</p>
+      {item.hidden ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-line bg-white/[.03] text-center">
+          <div className="text-7xl">{state.phase === 'wager' ? '💰' : '🔒'}</div>
+          <div className="text-4xl font-black">{state.phase === 'wager' ? 'Lock in your wager!' : 'Get ready…'}</div>
+          <div className="text-xl text-muted">The question appears when answering opens.</div>
+        </div>
+      ) : (
+        <p className="text-3xl font-bold leading-snug">{item.prompt}</p>
+      )}
 
-      <div className="flex min-h-0 flex-1 gap-5">
+      <div className={cx('flex min-h-0 gap-5', !item.hidden && 'flex-1')}>
         {(item.figure || (revealed && item.answerFigure)) && (
           <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl bg-white p-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -171,50 +189,147 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
         <div className="flex flex-wrap gap-2">
           {data.teams.map((t) => {
             const on = answeredSet.has(t.id);
+            const card = data.cards.find((c) => c.team_id === t.id && c.status === 'used' && c.item_id === item.id);
+            const info = card ? POWERUP_INFO[card.type] : null;
             return (
-              <span key={t.id} className={cx('flex items-center gap-2 rounded-full px-3 py-1.5 text-base font-semibold transition', on ? 'bg-white/15 text-white' : 'bg-white/5 text-muted/50')}>
+              <span key={t.id} className={cx('flex items-center gap-2 rounded-full px-3 py-1.5 text-base font-semibold transition', on ? 'bg-white/15 text-white' : 'bg-white/5 text-muted/50')}
+                style={info ? { boxShadow: `0 0 0 2px ${info.color}` } : undefined}>
                 <Dot color={on ? t.color : '#334155'} /> {t.name} {on && '✓'}
+                {info && <span title={info.name} style={{ color: info.color }}>{info.icon}</span>}
               </span>
             );
           })}
         </div>
       )}
+      {!item.manual && <CardStrip data={data} />}
     </section>
   );
 }
 
-function Leaderboard({ data }: { data: BoardView }) {
-  const order = data.teams;
-  const max = Math.max(1, ...order.map((t) => t.total));
-  const byId = [...order].sort((a, b) => a.id.localeCompare(b.id));
+/** Which cards a team could play on this question right now, and which are already working on it. */
+function CardStrip({ data }: { data: BoardView }) {
+  const { item, phase } = data.state;
+  if (!item) return null;
+  const now = POWERUP_ORDER.filter((t) => playableNow(t, item, phase));
+  const active = data.cards.filter((c) => (c.status === 'used' && c.item_id === item.id) || c.status === 'requested');
+  const holding = data.teams.filter((t) => !data.cards.some((c) => c.team_id === t.id)).length;
+  const teamOf = (id: string) => data.teams.find((t) => t.id === id);
   return (
-    <section className="flex min-h-0 flex-col gap-4 rounded-3xl border border-line bg-panel/70 p-6">
-      <h2 className="text-2xl font-black">Leaderboard</h2>
-      <div className="relative min-h-0 flex-1 overflow-y-auto">
-        <div className="relative" style={{ height: order.length * ROW }}>
-          {byId.map((t) => {
-            const idx = order.findIndex((x) => x.id === t.id);
+    <div className="flex flex-col gap-2 rounded-2xl bg-white/[.04] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold uppercase tracking-wider text-muted">🃏 Playable now</span>
+        {now.length === 0 && <span className="text-sm text-muted">none on this question</span>}
+        {now.map((t) => {
+          const info = POWERUP_INFO[t];
+          return (
+            <span key={t} className="rounded-full px-3 py-1 text-sm font-bold" style={{ background: `${info.color}22`, color: info.color }}>
+              {info.icon} {info.name}
+            </span>
+          );
+        })}
+        <span className="ml-auto text-sm text-muted">{holding} of {data.teams.length} teams still hold a card</span>
+      </div>
+      {active.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-bold uppercase tracking-wider text-muted">⚡ Active on this question</span>
+          {active.map((c) => {
+            const info = POWERUP_INFO[c.type];
+            const t = teamOf(c.team_id);
             return (
-              <div key={t.id} className="absolute inset-x-0 flex items-center gap-3 transition-transform duration-700 ease-out"
-                style={{ transform: `translateY(${idx * ROW}px)`, height: ROW - 10 }}>
-                <div className={cx('grid h-12 w-12 shrink-0 place-items-center rounded-xl text-xl font-black', t.rank === 1 ? 'bg-gold text-ink' : t.rank === 2 ? 'bg-slate-300 text-ink' : t.rank === 3 ? 'bg-amber-700 text-white' : 'bg-white/5')}>
-                  {t.rank}
-                </div>
-                <div className="relative h-full flex-1 overflow-hidden rounded-xl bg-white/5">
-                  <div className="absolute inset-y-0 left-0 rounded-xl transition-all duration-700 ease-out"
-                    style={{ width: `${Math.max(2, (Math.max(0, t.total) / max) * 100)}%`, background: `linear-gradient(90deg, ${t.color}55, ${t.color})` }} />
-                  <div className="relative flex h-full items-center justify-between px-4">
-                    <span className="truncate text-xl font-bold drop-shadow">{t.name}</span>
-                    <span className="text-3xl font-black tabular-nums drop-shadow">{t.total}</span>
-                  </div>
-                </div>
-              </div>
+              <span key={c.team_id + c.type} className={cx('flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-bold', c.status === 'requested' && 'opacity-70')}
+                style={{ borderColor: info?.color }}>
+                <Dot color={t?.color ?? '#888'} size={8} /> {t?.name} <span style={{ color: info?.color }}>{info?.icon} {info?.name}</span>
+                {c.status === 'requested' && <span className="text-xs text-muted">waiting for OK</span>}
+              </span>
             );
           })}
         </div>
-        {order.length === 0 && <p className="text-muted">Teams will appear here as they join.</p>}
+      )}
+    </div>
+  );
+}
+
+type LbView = 'question' | 'overall' | 'rounds' | 'hidden';
+const VIEW_TITLE: Record<LbView, string> = { question: 'This question', overall: 'Overall', rounds: 'By round', hidden: 'Hidden' };
+
+/**
+ * Picks the leaderboard view. The teacher can pin one (or hide the rankings); on Auto the board
+ * shows this question's points right after a reveal, then slides to the overall ranking, and
+ * between questions it alternates between the overall and the per-round rankings.
+ */
+function useLeaderboardView(data: BoardView): LbView {
+  const { board, phase, item } = data.state;
+  const [auto, setAuto] = useState<'question' | 'overall' | 'rounds'>('overall');
+  const revealKey = phase === 'revealed' && item && !item.manual ? item.id : null;
+  const prevReveal = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevReveal.current;
+    prevReveal.current = revealKey;
+    if (prev === undefined || !revealKey || prev === revealKey) return;
+    setAuto('question');
+    const t = setTimeout(() => setAuto('overall'), 10000);
+    return () => clearTimeout(t);
+  }, [revealKey]);
+  const calm = !item || phase === 'idle' || phase === 'revealed';
+  useEffect(() => {
+    if (!calm) { setAuto((a) => (a === 'rounds' ? 'overall' : a)); return; }
+    const t = setInterval(() => setAuto((a) => (a === 'question' ? a : a === 'overall' ? 'rounds' : 'overall')), 15000);
+    return () => clearInterval(t);
+  }, [calm]);
+  const hasQuestion = phase === 'revealed' && !!item && !item.manual;
+  if (board === 'hidden') return 'hidden';
+  if (board === 'overall' || board === 'rounds') return board;
+  if (board === 'question') return hasQuestion ? 'question' : 'overall';
+  return auto === 'question' && !hasQuestion ? 'overall' : auto;
+}
+
+function Leaderboard({ data }: { data: BoardView }) {
+  const view = useLeaderboardView(data);
+  // Big reveal: when the rankings come back from hidden, show them from last place up to first.
+  const [revealN, setRevealN] = useState<number | null>(null);
+  const prevView = useRef<LbView>(view);
+  useEffect(() => {
+    const was = prevView.current;
+    prevView.current = view;
+    if (was === 'hidden' && view !== 'hidden' && data.teams.length) setRevealN(0);
+    if (view === 'hidden') setRevealN(null);
+  }, [view, data.teams.length]);
+  // Live refreshes replace data.teams every few seconds; keep the timer tied to the count only.
+  const topColor = useRef<string | undefined>(undefined);
+  topColor.current = data.teams[0]?.color;
+  const n = data.teams.length;
+  useEffect(() => {
+    if (revealN === null) return;
+    if (revealN >= n) {
+      if (topColor.current) confetti([topColor.current, '#ffffff', '#fbbf24']);
+      const t = setTimeout(() => setRevealN(null), 1500);
+      return () => clearTimeout(t);
+    }
+    // Slow down for the podium.
+    const t = setTimeout(() => setRevealN(revealN + 1), n - revealN <= 3 ? 2600 : 1300);
+    return () => clearTimeout(t);
+  }, [revealN, n]);
+  const shown: LbView = revealN !== null ? 'overall' : view;
+
+  return (
+    <section className="flex min-h-0 flex-col gap-4 rounded-3xl border border-line bg-panel/70 p-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-2xl font-black">Leaderboard</h2>
+        {shown !== 'hidden' && (
+          <div className="flex gap-1 rounded-full bg-white/5 p-1 text-sm font-semibold">
+            {(['question', 'overall', 'rounds'] as const).map((v) => (
+              <span key={v} className={cx('rounded-full px-3 py-1 transition', shown === v ? 'bg-brand text-white' : 'text-muted/60')}>{VIEW_TITLE[v]}</span>
+            ))}
+          </div>
+        )}
       </div>
-      {data.recent.length > 0 && (
+      <div key={shown} className="rise relative flex min-h-0 flex-1 flex-col">
+        {shown === 'hidden' ? <HiddenRanks data={data} />
+          : shown === 'question' ? <QuestionRanks data={data} />
+          : shown === 'rounds' ? <RoundRanks teams={data.teams} />
+          : <OverallRanks teams={data.teams} revealN={revealN} />}
+      </div>
+      {shown === 'overall' && revealN === null && data.recent.length > 0 && (
         <div className="border-t border-line pt-3">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Latest</div>
           <ul className="flex flex-col gap-1 text-sm">
@@ -231,31 +346,164 @@ function Leaderboard({ data }: { data: BoardView }) {
   );
 }
 
-/** Big announcement on the projector for a few seconds when a team plays a card. */
+function RankBadge({ rank, className }: { rank: number; className?: string }) {
+  return (
+    <div className={cx('grid shrink-0 place-items-center rounded-xl font-black', rank === 1 ? 'bg-gold text-ink' : rank === 2 ? 'bg-slate-300 text-ink' : rank === 3 ? 'bg-amber-700 text-white' : 'bg-white/5', className ?? 'h-12 w-12 text-xl')}>
+      {rank > 0 ? rank : '?'}
+    </div>
+  );
+}
+
+function OverallRanks({ teams, revealN }: { teams: TeamScore[]; revealN: number | null }) {
+  const max = Math.max(1, ...teams.map((t) => t.total));
+  const byId = [...teams].sort((a, b) => a.id.localeCompare(b.id));
+  return (
+    <div className="relative min-h-0 flex-1 overflow-y-auto">
+      <div className="relative" style={{ height: teams.length * ROW }}>
+        {byId.map((t) => {
+          const idx = teams.findIndex((x) => x.id === t.id);
+          const veiled = revealN !== null && idx < teams.length - revealN;
+          return (
+            <div key={t.id} className="absolute inset-x-0 flex items-center gap-3 transition-transform duration-700 ease-out"
+              style={{ transform: `translateY(${idx * ROW}px)`, height: ROW - 10 }}>
+              <RankBadge rank={veiled ? 0 : t.rank} />
+              <div className="relative h-full flex-1 overflow-hidden rounded-xl bg-white/5">
+                {veiled ? (
+                  <div className="flex h-full items-center px-4 text-3xl font-black text-muted/40">?</div>
+                ) : (
+                  <div className="pop h-full">
+                    <div className="absolute inset-y-0 left-0 rounded-xl transition-all duration-700 ease-out"
+                      style={{ width: `${Math.max(2, (Math.max(0, t.total) / max) * 100)}%`, background: `linear-gradient(90deg, ${t.color}55, ${t.color})` }} />
+                    <div className="relative flex h-full items-center justify-between px-4">
+                      <span className="truncate text-xl font-bold drop-shadow">{t.name}</span>
+                      <span className="text-3xl font-black tabular-nums drop-shadow">{t.total}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {teams.length === 0 && <p className="text-muted">Teams will appear here as they join.</p>}
+    </div>
+  );
+}
+
+function QuestionRanks({ data }: { data: BoardView }) {
+  const item = data.state.item!;
+  const pts = new Map(data.itemPoints.map((p) => [p.team_id, p.points]));
+  const answered = new Set(data.answered);
+  const rows = [...data.teams].sort((a, b) => (pts.get(b.id) ?? 0) - (pts.get(a.id) ?? 0) || a.name.localeCompare(b.name));
+  const ranks = rows.map((t, i) => (i > 0 && (pts.get(t.id) ?? 0) === (pts.get(rows[i - 1].id) ?? 0) ? -1 : i + 1));
+  ranks.forEach((r, i) => { if (r === -1) ranks[i] = ranks[i - 1]; });
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <div className="text-sm font-semibold text-muted">{item.round} {item.label} · points earned on this question</div>
+      {rows.map((t, i) => {
+        const p = pts.get(t.id) ?? 0;
+        const card = data.cards.find((c) => c.team_id === t.id && c.status === 'used' && c.item_id === item.id);
+        return (
+          <div key={t.id} className="rise flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2" style={{ animationDelay: `${i * 80}ms` }}>
+            <RankBadge rank={ranks[i]} className="h-10 w-10 text-lg" />
+            <Dot color={t.color} />
+            <span className="flex-1 truncate text-xl font-bold">
+              {t.name} {data.firstCorrect === t.id && '🥇'} {card && <span style={{ color: POWERUP_INFO[card.type]?.color }}>{POWERUP_INFO[card.type]?.icon}</span>}
+            </span>
+            {!answered.has(t.id) && p === 0 && <span className="text-sm text-muted">no answer</span>}
+            <span className={cx('text-3xl font-black tabular-nums', p > 0 ? 'text-win' : p < 0 ? 'text-lose' : 'text-muted')}>{signed(p)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const CATEGORY_ROUNDS = ['R1', 'R2', 'R3', 'R4', 'R5'] as const;
+
+function RoundRanks({ teams }: { teams: TeamScore[] }) {
+  return (
+    <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto">
+      {CATEGORY_ROUNDS.map((r) => {
+        const meta = ROUND_META[r];
+        const rows = [...teams].sort((a, b) => (b.byRound[r] ?? 0) - (a.byRound[r] ?? 0) || a.name.localeCompare(b.name));
+        const played = rows.some((t) => (t.byRound[r] ?? 0) !== 0);
+        return (
+          <div key={r} className="rounded-2xl border border-line bg-white/[.03] p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-bold" style={{ color: meta.color }}>{meta.icon} {r} · {meta.title}</div>
+            {!played ? <p className="text-sm text-muted">Not played yet</p> : (
+              <ol className="flex flex-col gap-1">
+                {rows.slice(0, 5).map((t, i) => {
+                  // Tied teams share a place.
+                  const place = rows.findIndex((x) => (x.byRound[r] ?? 0) === (t.byRound[r] ?? 0)) + 1;
+                  return (
+                  <li key={t.id} className="flex items-center justify-between gap-2 text-base">
+                    <span className="flex min-w-0 items-center gap-2 truncate">
+                      <span className="w-5 text-muted">{place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : place}</span>
+                      <Dot color={t.color} size={9} /> <b className="truncate">{t.name}</b>
+                    </span>
+                    <span className="font-black tabular-nums">{t.byRound[r] ?? 0}</span>
+                  </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HiddenRanks({ data }: { data: BoardView }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+      <div className="text-7xl">🤫</div>
+      <div className="text-3xl font-black">Rankings are hidden</div>
+      <p className="text-lg text-muted">Who&apos;s on top? You&apos;ll find out at the big reveal.</p>
+      <div className="flex flex-wrap justify-center gap-2">
+        {data.teams.map((t) => (
+          <span key={t.id} className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5"><Dot color={t.color} /> {t.name}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Big announcement on the projector when a team plays a card (and when the teacher approves one). Plays queue up. */
 function PowerupFlash({ data, muted }: { data: BoardView; muted: boolean }) {
-  const latest = data.plays[0];
-  const key = latest ? `${latest.team}|${latest.type}|${latest.at}` : null;
-  const seen = useRef<string | null | undefined>(undefined);
-  const [show, setShow] = useState<BoardView['plays'][number] | null>(null);
+  const keyOf = (p: PowerupPlay) => `${p.id}|${p.at}|${p.status === 'requested' ? 'asked' : 'on'}`;
+  const seen = useRef<Set<string> | null>(null);
+  const [queue, setQueue] = useState<PowerupPlay[]>([]);
   useEffect(() => {
-    if (seen.current === undefined) { seen.current = key; return; } // don't replay old cards on page load
-    if (!key || key === seen.current) return;
-    seen.current = key;
-    setShow(latest);
+    const keys = data.plays.map(keyOf);
+    if (!seen.current) { seen.current = new Set(keys); return; } // don't replay old cards on page load
+    const fresh = data.plays.filter((p) => !seen.current!.has(keyOf(p))).reverse(); // oldest first
+    if (!fresh.length) return;
+    fresh.forEach((p) => seen.current!.add(keyOf(p)));
+    setQueue((q) => [...q, ...fresh]);
+  }, [data.plays]); // eslint-disable-line react-hooks/exhaustive-deps
+  const show = queue[0] ?? null;
+  useEffect(() => {
+    if (!show) return;
     if (!muted) sound('fanfare');
-    const t = setTimeout(() => setShow(null), 6000);
+    const t = setTimeout(() => setQueue((q) => q.slice(1)), 4500);
     return () => clearTimeout(t);
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [show]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!show) return null;
   const info = POWERUP_INFO[show.type] ?? { name: show.type, icon: '★', color: '#a78bfa', text: '' };
+  const status = show.status === 'requested' ? 'Waiting for the teacher to approve'
+    : show.status === 'armed' ? 'Activates on the next question'
+    : show.item && show.type !== 'lifeline' && show.type !== 'retry' ? `Active now on ${show.item}` : info.text;
   return (
     <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center bg-black/40">
       <div className="pop flex flex-col items-center gap-2 rounded-3xl border-2 bg-panel px-14 py-10 text-center"
         style={{ borderColor: info.color, boxShadow: `0 0 80px ${info.color}88` }}>
         <div className="text-8xl" style={{ color: info.color }}>{info.icon}</div>
         <div className="text-2xl font-bold" style={{ color: show.color }}>{show.team}</div>
-        <div className="text-5xl font-black">plays {info.name}!</div>
+        <div className="text-5xl font-black">{show.status === 'requested' ? 'wants' : 'plays'} {info.name}!</div>
         <div className="text-xl text-muted">{info.text}</div>
+        <div className="mt-2 rounded-full px-4 py-1 text-lg font-bold" style={{ background: `${info.color}22`, color: info.color }}>{status}</div>
       </div>
     </div>
   );

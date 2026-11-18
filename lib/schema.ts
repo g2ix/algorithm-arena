@@ -1,6 +1,6 @@
 // Database schema. Runs automatically the first time the app talks to the
 // database (see lib/db.ts), and is also saved as supabase/migrations/001_init.sql.
-export const SCHEMA_VERSION = '4';
+export const SCHEMA_VERSION = '6';
 
 export const SCHEMA_SQL = `
 create table if not exists app_meta (
@@ -78,6 +78,8 @@ create table if not exists game_state (
   version bigint not null default 0,
   updated_at timestamptz not null default now()
 );
+-- What the projector's leaderboard shows: auto | question | overall | rounds | hidden
+alter table game_state add column if not exists board text not null default 'auto';
 
 create table if not exists submissions (
   id uuid primary key default gen_random_uuid(),
@@ -162,6 +164,9 @@ begin
     if not exists (select 1 from pg_policies where tablename = 'game_state' and policyname = 'live read') then
       execute 'create policy "live read" on game_state for select to anon, authenticated using (true)';
     end if;
+    -- Newer Supabase projects no longer grant table access to anon by default.
+    -- Without this grant Realtime rejects the subscription and screens fall back to slow polling.
+    execute 'grant select on game_state to anon, authenticated';
   end if;
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'game_state') then

@@ -24,7 +24,7 @@ export function TeamHeader({ data }: { data: MeView }) {
         </div>
         <div className="text-right">
           <div className="text-2xl font-black tabular-nums leading-none">{data.team.total}</div>
-          <div className="text-xs text-muted">{ord(data.team.rank)} of {data.teamsCount}</div>
+          <div className="text-xs text-muted">{data.ranksHidden ? '🤫 rank hidden' : `${ord(data.team.rank)} of ${data.teamsCount}`}</div>
         </div>
       </div>
       <nav className="mx-auto flex max-w-xl gap-1 px-4 pb-2">

@@ -68,10 +68,19 @@ export function useLive<T>(url: string | null, sessionIdOrFn: string | null | un
   useEffect(() => {
     const sb = realtimeClient();
     if (!sb || !sessionId) return;
+    // "SUBSCRIBED" only means the socket joined. Supabase confirms (or rejects) the
+    // database listener separately in a system message; trust Realtime only after "ok",
+    // otherwise keep fast polling so screens never wait 15 s for a change.
     const ch = sb
       .channel(`gs-${sessionId}-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'game_state', filter: `session_id=eq.${sessionId}` }, () => void reload())
-      .subscribe((status) => setLive(status === 'SUBSCRIBED'));
+      .on('system', {}, (m: { extension?: string; status?: string }) => {
+        if (m?.extension === 'postgres_changes') {
+          setLive(m.status === 'ok');
+          if (m.status === 'ok') void reload(); // catch anything that changed while connecting
+        }
+      })
+      .subscribe((status) => { if (status !== 'SUBSCRIBED') setLive(false); });
     return () => {
       setLive(false);
       void sb.removeChannel(ch);
@@ -79,7 +88,7 @@ export function useLive<T>(url: string | null, sessionIdOrFn: string | null | un
   }, [sessionId, reload]);
 
   useEffect(() => {
-    const ms = live ? 15000 : 2500;
+    const ms = live ? 8000 : 2000;
     const t = setInterval(() => {
       if (document.visibilityState === 'visible') void reload();
     }, ms);

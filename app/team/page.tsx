@@ -28,7 +28,7 @@ export default function TeamPage() {
           <div className="text-xs font-semibold uppercase tracking-wider text-muted">Team score</div>
           <div className="text-6xl font-black tabular-nums" style={{ color: me.team.color }}>{me.team.total}</div>
           <div className="mt-1 text-muted">
-            {me.team.rank === 1 ? '🏆 You are in the lead!' : gap > 0 ? `${gap} point${gap === 1 ? '' : 's'} behind ${me.leader!.name}` : `Rank #${me.team.rank}`}
+            {me.ranksHidden ? '🤫 Rankings are hidden for the big reveal' : me.team.rank === 1 ? '🏆 You are in the lead!' : gap > 0 ? `${gap} point${gap === 1 ? '' : 's'} behind ${me.leader!.name}` : `Rank #${me.team.rank}`}
           </div>
         </Card>
 

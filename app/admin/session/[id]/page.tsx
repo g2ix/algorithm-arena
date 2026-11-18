@@ -5,9 +5,9 @@ import { useEffect, useState } from 'react';
 import { api, fmtTime, useCountdown, useLive } from '@/lib/client';
 import { AdminShell } from '@/components/AdminShell';
 import { Badge, Button, Card, cx, Dot, Empty, ErrorNote, Input, ROUND_META, signed, Spinner } from '@/components/ui';
-import { POWERUP_INFO } from '@/components/powerups';
+import { playableNow, POWERUP_INFO, POWERUP_ORDER } from '@/components/powerups';
 import { QuestionPicker, SetLoader } from '@/components/QuestionPicker';
-import type { LifelineHint, StateView, TeamScore } from '@/components/views';
+import type { LifelineHint, PowerupPlay, StateView, TeamScore } from '@/components/views';
 
 type Item = { id: string; round: string; label: string; prompt: string; manual: boolean; points: Record<string, number | boolean>; timeLimit: number; answerText: string; selected: boolean };
 type Sub = { id: string; team_id: string; answer_raw: string[] | null; wager: number | null; is_correct: boolean | null; override: boolean; rank: number | null; submitted_at: string | null; member: string | null };
@@ -15,7 +15,7 @@ type Pow = { id: string; team_id: string; team: string; type: string; status: st
 type Ev = { id: string; team_id: string; item_id: string | null; tag: string; points: number; reason: string; created_at: string };
 type Admin = {
   session: { id: string; code: string; title: string; status: string; class_name: string; team_mode: string; max_team_size: number; practice: boolean };
-  state: StateView & { currentItemId: string | null };
+  state: StateView & { currentItemId: string | null; openedAt: string | null };
   current: { id: string; round_id: string; label: string; prompt: string; answer_text: string; explanation: string | null; time_limit_s: number; points: { wager?: boolean }; answer_key: { type: string } } | null;
   items: Item[];
   scoredItemIds: string[];
@@ -23,6 +23,7 @@ type Admin = {
   members: { id: string; team_id: string; display_name: string }[];
   submissions: Sub[];
   powerups: Pow[];
+  plays: PowerupPlay[];
   manualEvents: Ev[];
 };
 
@@ -111,6 +112,13 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
   const idx = cur ? inGame.findIndex((i) => i.id === cur.id) : -1;
   const next = idx >= 0 ? inGame[idx + 1] : inGame[0];
   const subByTeam = new Map(data.submissions.map((s) => [s.team_id, s]));
+  // Submission ranking: 1 = the first team to send an answer for this question.
+  const order = data.submissions.filter((s) => s.answer_raw && s.submitted_at)
+    .sort((a, b) => new Date(a.submitted_at!).getTime() - new Date(b.submitted_at!).getTime());
+  const orderOf = new Map(order.map((s, i) => [s.team_id, i + 1]));
+  const opened = data.state.openedAt ? new Date(data.state.openedAt).getTime() : null;
+  const rows = [...data.teams].sort((a, b) => (orderOf.get(a.id) ?? 1e9) - (orderOf.get(b.id) ?? 1e9));
+  const cardOf = (teamId: string) => data.powerups.find((p) => p.team_id === teamId && p.status !== 'available');
   const isManual = cur?.answer_key.type === 'manual';
   const isWager = !!cur?.points.wager;
   const pending = data.powerups.filter((p) => p.status === 'requested');
@@ -205,21 +213,42 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
               )}
             </div>
 
+            {!isManual && <CardsNow data={data} />}
             {!isManual && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-left text-xs uppercase tracking-wider text-muted">
-                    <tr><th className="py-2">Team</th>{isWager && <th>Wager</th>}<th>Answer</th><th>By</th><th>Result</th><th className="text-right">Mark</th></tr>
+                    <tr><th className="py-2" title="Order in which teams submitted">#</th><th>Team</th>{isWager && <th>Wager</th>}<th>Answer</th><th>By</th><th>Card</th><th>Result</th><th className="text-right">Mark</th></tr>
                   </thead>
                   <tbody className="divide-y divide-line">
-                    {data.teams.map((t) => {
+                    {rows.map((t) => {
                       const s = subByTeam.get(t.id);
+                      const n = orderOf.get(t.id);
+                      const card = cardOf(t.id);
+                      const info = card ? POWERUP_INFO[card.type] : null;
+                      const cardHere = card && (card.item_id === cur.id || card.status === 'armed' || card.status === 'requested');
                       return (
                         <tr key={t.id}>
+                          <td className="py-2 pr-2">
+                            {n ? (
+                              <span className={cx('inline-grid h-7 min-w-7 place-items-center rounded-lg px-1 text-xs font-black', n === 1 ? 'bg-gold text-ink' : n === 2 ? 'bg-slate-300 text-ink' : n === 3 ? 'bg-amber-700 text-white' : 'bg-white/10')}>
+                                {n}
+                              </span>
+                            ) : <span className="text-muted">–</span>}
+                            {n && opened && s?.submitted_at && <div className="text-[10px] text-muted tabular-nums">{((new Date(s.submitted_at).getTime() - opened) / 1000).toFixed(1)}s</div>}
+                          </td>
                           <td className="py-2"><span className="flex items-center gap-2 font-semibold"><Dot color={t.color} size={10} />{t.name}</span></td>
                           {isWager && <td className="font-bold text-gold">{s?.wager ?? '–'}</td>}
                           <td className="max-w-[320px] font-mono">{s?.answer_raw ? s.answer_raw.join(' | ') : <span className="text-muted">–</span>}</td>
                           <td className="text-muted">{s?.member ?? ''}</td>
+                          <td className="whitespace-nowrap text-xs">
+                            {card && info && cardHere ? (
+                              <span style={{ color: info.color }} title={info.text}>
+                                {info.icon} {info.name}
+                                <span className="text-muted"> · {card.status === 'requested' ? 'needs OK' : card.status === 'armed' ? 'next question' : 'active'}</span>
+                              </span>
+                            ) : null}
+                          </td>
                           <td>
                             {s && phase === 'revealed' && (s.answer_raw || s.wager) ? (
                               <span className={cx('font-semibold', s.is_correct ? 'text-win' : 'text-lose')}>
@@ -264,7 +293,84 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
             ))}
           </Card>
         )}
+        <BoardControl board={data.state.board} ctl={ctl} />
         <MiniBoard teams={data.teams} />
+        <PlayFeed plays={data.plays} />
+      </div>
+    </div>
+  );
+}
+
+const BOARD_OPTIONS = [
+  ['auto', '✨ Auto', 'After each reveal: this question’s points, then the overall ranking. Between questions it alternates with the per-round ranking.'],
+  ['question', '❓ This question', 'Points each team earned on the question just revealed.'],
+  ['overall', '🏆 Overall', 'Total ranking.'],
+  ['rounds', '📊 By round', 'Ranking for each round (R1 to R5).'],
+  ['hidden', '🤫 Hide', 'Hide every ranking on the projector and phones. Pick another view later for a last-to-first reveal.'],
+] as const;
+
+function BoardControl({ board, ctl }: { board: string; ctl: (action: string, extra?: object) => void }) {
+  const cur = BOARD_OPTIONS.find((o) => o[0] === board) ?? BOARD_OPTIONS[0];
+  return (
+    <Card className={cx(board === 'hidden' && 'border-gold/50')}>
+      <h3 className="mb-2 font-bold">Projector leaderboard</h3>
+      <div className="grid grid-cols-2 gap-1.5">
+        {BOARD_OPTIONS.map(([v, label]) => (
+          <button key={v} onClick={() => v !== board && ctl('board', { board: v })}
+            className={cx('rounded-lg px-2 py-1.5 text-sm font-semibold', v === board ? 'bg-brand text-white' : 'bg-white/5 text-muted hover:text-white', v === 'hidden' && 'col-span-2')}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted">{cur[2]}</p>
+      {board === 'hidden' && <p className="mt-1 text-xs font-bold text-gold">Rankings are hidden. Choose Overall to reveal them from last place to first.</p>}
+    </Card>
+  );
+}
+
+function PlayFeed({ plays }: { plays: PowerupPlay[] }) {
+  return (
+    <Card>
+      <h3 className="mb-3 font-bold">Power-up activity</h3>
+      {plays.length === 0 ? <p className="text-sm text-muted">No cards played yet.</p> : (
+        <ul className="flex flex-col gap-1.5 text-sm">
+          {plays.map((p) => {
+            const info = POWERUP_INFO[p.type];
+            return (
+              <li key={p.id} className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-2"><Dot color={p.color} size={9} /><b className="truncate">{p.team}</b>
+                  <span style={{ color: info?.color }}>{info?.icon} {info?.name ?? p.type}</span></span>
+                <span className="shrink-0 text-xs text-muted">
+                  {p.status === 'requested' ? 'needs your OK' : p.status === 'armed' ? 'next question' : p.item && p.type !== 'lifeline' && p.type !== 'retry' ? `on ${p.item}` : p.item ? `used on ${p.item}` : 'played'}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function CardsNow({ data }: { data: Admin }) {
+  const item = data.state.item;
+  const now = POWERUP_ORDER.filter((t) => playableNow(t, item, data.state.phase));
+  const active = data.powerups.filter((p) => (p.status === 'used' && p.item_id === data.current?.id && p.type !== 'lifeline' && p.type !== 'retry') || p.status === 'armed');
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl bg-white/5 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-bold uppercase tracking-wider text-muted">Playable now</span>
+        {now.length === 0 && <span className="text-muted">none</span>}
+        {now.map((t) => <span key={t} className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: `${POWERUP_INFO[t].color}22`, color: POWERUP_INFO[t].color }}>{POWERUP_INFO[t].icon} {POWERUP_INFO[t].name}</span>)}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-bold uppercase tracking-wider text-muted">Active</span>
+        {active.length === 0 && <span className="text-muted">no card on this question</span>}
+        {active.map((p) => (
+          <span key={p.id} className="rounded-full border px-2 py-0.5 text-xs font-bold" style={{ borderColor: POWERUP_INFO[p.type]?.color, color: POWERUP_INFO[p.type]?.color }}>
+            {p.team}: {POWERUP_INFO[p.type]?.icon} {POWERUP_INFO[p.type]?.name}{p.status === 'armed' && ' (waiting)'}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -512,7 +618,7 @@ function PowerPoints({ data, call, base }: { data: Admin; call: Call; base: stri
                         <Button size="sm" variant="ghost" onClick={() => call(`${base}/powerups`, { powerupId: p.id, approve: false })}>Deny</Button>
                       </span>
                     ) : p ? (
-                      <Badge color={p.status === 'armed' ? '#a78bfa' : '#94a3b8'}>{p.status === 'armed' ? 'waiting for next item' : p.status}</Badge>
+                      <Badge color={p.status === 'armed' ? '#a78bfa' : '#94a3b8'}>{p.status === 'armed' ? 'waiting for next question' : on && p.type !== 'lifeline' && p.type !== 'retry' ? 'active' : p.status}</Badge>
                     ) : (
                       <Badge>available</Badge>
                     )}

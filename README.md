@@ -79,13 +79,31 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 |---|---|---|
 | 🛟 Lifeline | The system checks the team's current draft and gives a hint (e.g. "first 3 items are right; the 4th is where it goes wrong", "too high", "C-E is not one of the roads") without revealing missing answer pieces | No |
 | 🔁 Second Chance | Erases the team's submitted answer while answering is open so they can resubmit (new time) | No |
-| ⚡ Fast Pass | A correct answer on the next R1/R2 item earns first-place points | No |
-| 2× Double Down | Doubles the team's result on the next R1/R2 item you reveal, win or lose | Yes |
-| 🛡️ Shield | Cancels any net loss on the next R1/R2/R3 item revealed (wrong answer or lost wager) | No |
-| 🎰 High Roller | Raises the wager cap from 5 to 10 on the next Map Heist item | No |
+| ⚡ Fast Pass | A correct answer on the R1/R2 question on screen earns first-place points | No |
+| 2× Double Down | Doubles the team's result on the R1/R2 question on screen, win or lose (from the moment you approve) | Yes |
+| 🛡️ Shield | Cancels any net loss on the question on screen (wrong answer or lost wager) | No |
+| 🎰 High Roller | Raises the wager cap from 5 to 10 on the Map Heist question on screen (play it before locking the wager) | No |
 | 🦝 Steal | The team tries an item another team got wrong; you award points with an adjustment | Yes |
 
-The projector shows a big announcement whenever a team plays a card.
+Scoring cards take effect on the question on screen the moment they are played. If no suitable question is up (nothing selected, the answer already revealed, or a Map Heist for Fast Pass / Double Down), the card waits and activates as soon as you select the next question it fits. A card on a question you skip without revealing moves on to the next one.
+
+The projector shows a big announcement whenever a team plays a card, and a card icon next to each team that has one active. The Control tab shows the same in its **Card** column and the **Power-up activity** list.
+
+The question text and figure stay hidden on the projector and phones until you press **Open answering**, including during Map Heist wagers. The Control tab's **#** column ranks teams by when they submitted (with seconds since opening).
+
+The projector, phones and Control tab all show which cards can be played on the current question (**Playable now** / **WORKS NOW**) and which cards are already active on it.
+
+### Projector leaderboard
+
+Pick the view in the Control tab's **Projector leaderboard** box:
+
+| View | Shows |
+|---|---|
+| ✨ Auto (default) | After each reveal, the points each team earned on that question for 10 s, then the overall ranking. Between questions it alternates with the per-round ranking. |
+| ❓ This question | Points earned on the question just revealed |
+| 🏆 Overall | Total ranking |
+| 📊 By round | Rankings for R1 to R5 side by side |
+| 🤫 Hide | No rankings anywhere: the projector, and the rank and leader on phones, are hidden (the server stops sending them). Choose any other view later and the projector reveals the ranking from last place to first. |
 
 Only a team's **first** submission counts, judged by the server's clock. Answers are flexible: `A, B, D`, `a b d`, `A→B→D` and `ABD` all match `A B D`; road lists like `F-C, I-A` match in any order; cycles match in any rotation.
 
