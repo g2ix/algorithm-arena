@@ -401,8 +401,9 @@ export async function requestPowerup(token: string | null, type: unknown, answer
   return tx(async (db) => {
     // Teams created before a card existed get its row on first use.
     await db(`insert into powerups (session_id, team_id, type) values ($1,$2,$3) on conflict do nothing`, [m.session_id, m.team_id, t]);
-    const used = await db(`select 1 from powerups where session_id=$1 and team_id=$2 and status <> 'available' for update`, [m.session_id, m.team_id]);
-    if (used.length) throw new HttpError(409, 'Your team already used its one power-up.');
+    // Each card works once per game; a team may still play its other cards.
+    const [mine] = await db<{ status: string }>(`select status from powerups where session_id=$1 and team_id=$2 and type=$3 for update`, [m.session_id, m.team_id, t]);
+    if (mine && mine.status !== 'available') throw new HttpError(409, 'Your team already used this card. Each card works once per game.');
     const set = (status: string, extra = '', params: unknown[] = []) =>
       db(`update powerups set status='${status}', requested_at=now()${extra} where session_id=$1 and team_id=$2 and type=$3`,
         [m.session_id, m.team_id, t, ...params]);

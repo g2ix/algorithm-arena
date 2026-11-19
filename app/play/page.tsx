@@ -128,9 +128,9 @@ function Stage({ me, reload, draft }: { me: MeView; reload: () => void; draft: R
 /** Before answering starts: remind the team it can still play a card that works on this question. */
 function CardNudge({ me }: { me: MeView }) {
   const item = me.state.item;
-  if (me.powerups.some((p) => p.status !== 'available')) return null;
   const mineNow = { submitted: !!me.mine.answers, wagerLocked: !!me.mine.wager };
-  const now = POWERUP_ORDER.filter((t) => playableNow(t, item, me.state.phase, mineNow));
+  const inHand = (t: string) => (me.powerups.find((p) => p.type === t)?.status ?? 'available') === 'available';
+  const now = POWERUP_ORDER.filter((t) => inHand(t) && playableNow(t, item, me.state.phase, mineNow));
   if (!now.length) return null;
   return (
     <button onClick={() => document.getElementById('cards')?.scrollIntoView({ behavior: 'smooth' })}
@@ -283,10 +283,10 @@ function Powerups({ me, reload, draft: draftRef }: { me: MeView; reload: () => v
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const usedOne = me.powerups.some((p) => p.status !== 'available');
   const item = me.state.item;
   const mineNow = { submitted: !!me.mine.answers, wagerLocked: !!me.mine.wager };
-  const activeHere = me.powerups.find((p) => item && p.status === 'used' && p.item_id === item.id && p.type !== 'lifeline' && p.type !== 'retry');
+  const activeHere = me.powerups.filter((p) => item && p.status === 'used' && p.item_id === item.id && p.type !== 'lifeline' && p.type !== 'retry');
+  const left = POWERUP_ORDER.filter((t) => (me.powerups.find((p) => p.type === t)?.status ?? 'available') === 'available').length;
   const play = async (t: string) => {
     const info = POWERUP_INFO[t];
     const draft = draftRef.current;
@@ -294,7 +294,7 @@ function Powerups({ me, reload, draft: draftRef }: { me: MeView; reload: () => v
       setErr('Type your best guess in the answer box first, then tap Lifeline to check it.');
       return;
     }
-    if (!confirm(`Play ${info.name}? Your team only gets one power-up per game.
+    if (!confirm(`Play ${info.name}? Each card works once per game.
 
 ${info.when}`)) return;
     setErr(''); setNote(''); setBusy(true);
@@ -313,14 +313,14 @@ ${info.when}`)) return;
     <Card id="cards">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-bold">Power-up cards</h3>
-        <span className="text-xs text-muted">Pick one per game</span>
+        <span className="text-xs text-muted">Each card once per game · {left} left</span>
       </div>
-      {activeHere && (
-        <p className="mb-3 rounded-lg px-3 py-2 text-sm font-bold" style={{ background: `${POWERUP_INFO[activeHere.type].color}22`, color: POWERUP_INFO[activeHere.type].color }}>
-          {POWERUP_INFO[activeHere.type].icon} {POWERUP_INFO[activeHere.type].name} is active on this question
+      {activeHere.map((a) => (
+        <p key={a.type} className="mb-2 rounded-lg px-3 py-2 text-sm font-bold" style={{ background: `${POWERUP_INFO[a.type].color}22`, color: POWERUP_INFO[a.type].color }}>
+          {POWERUP_INFO[a.type].icon} {POWERUP_INFO[a.type].name} is active on this question
         </p>
-      )}
-      {!usedOne && item && !item.manual && (
+      ))}
+      {left > 0 && item && !item.manual && (
         <p className="mb-3 text-xs text-muted">Cards marked <b className="text-win">WORKS NOW</b> apply to this question. Others wait for a question they fit.</p>
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -328,23 +328,24 @@ ${info.when}`)) return;
           const p = me.powerups.find((x) => x.type === t);
           const info = POWERUP_INFO[t];
           const status = p?.status ?? 'available';
-          const now = !usedOne && playableNow(t, item, me.state.phase, mineNow);
+          const now = status === 'available' && playableNow(t, item, me.state.phase, mineNow);
+          // Glow while the card is working (waiting for OK, waiting for a question, or on this one); fade once spent.
+          const live = status === 'requested' || status === 'armed' || (status === 'used' && !!item && p?.item_id === item.id);
           return (
-            <button key={t} disabled={usedOne || busy} onClick={() => play(t)}
-              style={status !== 'available' ? { borderColor: info.color, boxShadow: `0 0 18px ${info.color}55` } : undefined}
+            <button key={t} disabled={status !== 'available' || busy} onClick={() => play(t)}
+              style={live ? { borderColor: info.color, boxShadow: `0 0 18px ${info.color}55` } : undefined}
               className={cx('flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition',
-                status === 'available' && !usedOne && 'border-line bg-ink/40 hover:-translate-y-0.5 hover:border-brand',
+                status === 'available' && 'border-line bg-ink/40 hover:-translate-y-0.5 hover:border-brand',
                 status === 'requested' && 'bg-gold/10 pulse-ring',
                 status === 'armed' && 'bg-brand/15',
-                status === 'used' && 'bg-white/5',
-                status === 'available' && usedOne && 'border-line opacity-30')}>
+                status === 'used' && (live ? 'bg-white/5' : 'border-line bg-white/5 opacity-40'))}>
               {now && <span className="rounded-full bg-win/20 px-2 text-[10px] font-black tracking-wider text-win">WORKS NOW</span>}
               <span className="text-2xl font-black" style={{ color: info.color }}>{info.icon}</span>
               <span className="text-sm font-bold">{info.name}</span>
               <span className="text-[11px] leading-tight text-muted">
                 {status === 'requested' ? 'Waiting for teacher…'
                   : status === 'armed' ? 'Activates on the next question'
-                  : status === 'used' ? (p?.item && t !== 'lifeline' && t !== 'retry' ? `Active on ${p.item}` : 'Played!')
+                  : status === 'used' ? (p?.item && t !== 'lifeline' && t !== 'retry' ? `${live ? 'Active on' : 'Used on'} ${p.item}` : 'Played!')
                   : info.text}
               </span>
             </button>

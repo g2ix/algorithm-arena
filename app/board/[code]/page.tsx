@@ -216,13 +216,12 @@ function Stage({ data, muted }: { data: BoardView; muted: boolean }) {
         <div className="flex flex-wrap gap-2">
           {data.teams.map((t) => {
             const on = answeredSet.has(t.id);
-            const card = data.cards.find((c) => c.team_id === t.id && c.status === 'used' && c.item_id === item.id);
-            const info = card ? POWERUP_INFO[card.type] : null;
+            const infos = data.cards.filter((c) => c.team_id === t.id && c.status === 'used' && c.item_id === item.id).map((c) => POWERUP_INFO[c.type]);
             return (
               <span key={t.id} className={cx('flex items-center gap-2 rounded-full px-3 py-1.5 text-base font-semibold transition', on ? 'bg-white/15 text-white' : 'bg-white/5 text-muted/50')}
-                style={info ? { boxShadow: `0 0 0 2px ${info.color}` } : undefined}>
+                style={infos[0] ? { boxShadow: `0 0 0 2px ${infos[0].color}` } : undefined}>
                 <Dot color={on ? t.color : '#334155'} /> {t.name} {on && '✓'}
-                {info && <span title={info.name} style={{ color: info.color }}>{info.icon}</span>}
+                {infos.map((info) => <span key={info.name} title={info.name} style={{ color: info.color }}>{info.icon}</span>)}
               </span>
             );
           })}
@@ -239,7 +238,7 @@ function CardStrip({ data }: { data: BoardView }) {
   if (!item) return null;
   const now = POWERUP_ORDER.filter((t) => playableNow(t, item, phase));
   const active = data.cards.filter((c) => (c.status === 'used' && c.item_id === item.id) || c.status === 'requested');
-  const holding = data.teams.filter((t) => !data.cards.some((c) => c.team_id === t.id)).length;
+  const left = data.teams.length * POWERUP_ORDER.length - data.cards.length;
   const teamOf = (id: string) => data.teams.find((t) => t.id === id);
   return (
     <div className="flex flex-col gap-2 rounded-2xl bg-white/[.04] px-4 py-3">
@@ -254,7 +253,7 @@ function CardStrip({ data }: { data: BoardView }) {
             </span>
           );
         })}
-        <span className="ml-auto text-sm text-muted">{holding} of {data.teams.length} teams still hold a card</span>
+        <span className="ml-auto text-sm text-muted">{left} cards still in hand</span>
       </div>
       {active.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">

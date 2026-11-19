@@ -73,7 +73,7 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 | R4 Code Sprint | Bronze 5, Silver 10, Gold 15, Platinum 20, +3 first solver |
 | R5 Bug Hunt | +5 to the team you tap |
 
-### Power-up cards (each team plays one per game)
+### Power-up cards (each team can play every card once per game)
 
 | Card | Effect | Teacher OK? |
 |---|---|---|
@@ -84,6 +84,8 @@ Supabase pauses free projects after about a week with little activity. `vercel.j
 | 🛡️ Shield | Cancels any net loss on the question on screen (wrong answer or lost wager) | No |
 | 🎰 High Roller | Raises the wager cap from 5 to 10 on the Map Heist question on screen (play it before locking the wager) | No |
 | 🦝 Steal | The team tries an item another team got wrong; you award points with an adjustment | Yes |
+
+Each card works once per game, so a team can play up to all seven, even several on the same question (for example Double Down with a Shield). A spent card stays greyed out on the phones.
 
 Scoring cards take effect on the question on screen the moment they are played. If no suitable question is up (nothing selected, the answer already revealed, or a Map Heist for Fast Pass / Double Down), the card waits and activates as soon as you select the next question it fits. A card on a question you skip without revealing moves on to the next one.
 

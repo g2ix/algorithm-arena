@@ -122,7 +122,9 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
   const orderOf = new Map(order.map((s, i) => [s.team_id, i + 1]));
   const opened = data.state.openedAt ? new Date(data.state.openedAt).getTime() : null;
   const rows = [...data.teams].sort((a, b) => (orderOf.get(a.id) ?? 1e9) - (orderOf.get(b.id) ?? 1e9));
-  const cardOf = (teamId: string) => data.powerups.find((p) => p.team_id === teamId && p.status !== 'available');
+  // Cards working on this question for a team: active here, waiting for a question, or waiting for your OK.
+  const cardsOf = (teamId: string) => data.powerups.filter((p) => p.team_id === teamId && p.status !== 'available'
+    && (p.item_id === cur?.id || p.status === 'armed' || p.status === 'requested'));
   const isManual = cur?.answer_key.type === 'manual';
   const isWager = !!cur?.points.wager;
   const pending = data.powerups.filter((p) => p.status === 'requested');
@@ -283,9 +285,7 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
                     {rows.map((t) => {
                       const s = subByTeam.get(t.id);
                       const n = orderOf.get(t.id);
-                      const card = cardOf(t.id);
-                      const info = card ? POWERUP_INFO[card.type] : null;
-                      const cardHere = card && (card.item_id === cur.id || card.status === 'armed' || card.status === 'requested');
+                      const cards = cardsOf(t.id);
                       return (
                         <tr key={t.id}>
                           <td className="py-2 pr-2">
@@ -301,12 +301,15 @@ function Control({ data, call, base }: { data: Admin; call: Call; base: string }
                           <td className="max-w-[320px] font-mono">{s?.answer_raw ? s.answer_raw.join(' | ') : <span className="text-muted">–</span>}</td>
                           <td className="text-muted">{s?.member ?? ''}</td>
                           <td className="whitespace-nowrap text-xs">
-                            {card && info && cardHere ? (
-                              <span style={{ color: info.color }} title={info.text}>
-                                {info.icon} {info.name}
-                                <span className="text-muted"> · {card.status === 'requested' ? 'needs OK' : card.status === 'armed' ? 'next question' : 'active'}</span>
-                              </span>
-                            ) : null}
+                            {cards.map((card) => {
+                              const info = POWERUP_INFO[card.type];
+                              return (
+                                <div key={card.id} style={{ color: info?.color }} title={info?.text}>
+                                  {info?.icon} {info?.name ?? card.type}
+                                  <span className="text-muted"> · {card.status === 'requested' ? 'needs OK' : card.status === 'armed' ? 'next question' : 'active'}</span>
+                                </div>
+                              );
+                            })}
                           </td>
                           <td>
                             {s && phase === 'revealed' && (s.answer_raw || s.wager) ? (
@@ -647,19 +650,21 @@ function PowerPoints({ data, call, base }: { data: Admin; call: Call; base: stri
       <Card>
         <h2 className="mb-3 text-lg font-bold">Power-ups</h2>
         <p className="mb-3 text-sm text-muted">
-          Each team plays one card per game. Most cards run by themselves: <b>Lifeline</b> gives the team an automatic hint based on
+          Each team can play every card once per game. Most cards run by themselves: <b>Lifeline</b> gives the team an automatic hint based on
           their current draft, and <b>Shield</b>, <b>Fast Pass</b>, <b>High Roller</b> and <b>Second Chance</b> are applied by the scoring.
           Only <b>Double Down</b> and <b>Steal</b> wait for your OK (award steal points with an adjustment).
         </p>
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-muted"><tr><th className="py-1">Team</th><th>Card played</th><th>Status</th></tr></thead>
           <tbody className="divide-y divide-line">
-            {data.teams.map((t) => {
-              const p = data.powerups.find((x) => x.team_id === t.id && x.status !== 'available');
+            {data.teams.flatMap((t) => {
+              const played = data.powerups.filter((x) => x.team_id === t.id && x.status !== 'available');
+              return (played.length ? played : [null]).map((p) => ({ t, p }));
+            }).map(({ t, p }) => {
               const info = p ? POWERUP_INFO[p.type] : null;
               const on = p?.item_id ? data.items.find((i) => i.id === p.item_id) : null;
               return (
-                <tr key={t.id} className="align-top">
+                <tr key={`${t.id}-${p?.type ?? 'none'}`} className="align-top">
                   <td className="py-2 font-semibold">{t.name}</td>
                   <td className="py-2">
                     {p ? <span style={{ color: info?.color }}>{info?.icon} {info?.name ?? p.type}</span> : <span className="text-muted">—</span>}
